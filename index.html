@@ -1800,34 +1800,36 @@
         // ========== 🚀 企业微信分享核心功能（修复版） ==========
 
         // 上传文件到企业微信（通过 Worker 代理）
-        function uploadMedia(blob, filename, type) {
-            if (!blob) {
-                return Promise.reject(new Error('文件数据为空，请重试'));
-            }
-            if (!filename) {
-                return Promise.reject(new Error('文件名缺失，请重试'));
-            }
-            var url = UPLOAD_URL + '?type=' + encodeURIComponent(type);
-            var formData = new FormData();
-            formData.append('media', blob, filename);
-            return fetch(url, {
-                method: 'POST',
-                body: formData
-            }).then(function(resp) {
-                if (!resp.ok) {
-                    return resp.text().then(function(text) {
-                        throw new Error('上传失败: ' + text);
-                    });
-                }
-                return resp.json();
-            }).then(function(json) {
-                if (json.errcode !== 0) {
-                    throw new Error(json.errmsg || '上传失败，errcode: ' + json.errcode);
-                }
-                return json.media_id;
+function uploadMedia(blob, filename, type) {
+    if (!blob) {
+        return Promise.reject(new Error('文件数据为空，请重新生成'));
+    }
+    if (blob.size === 0) {
+        return Promise.reject(new Error('文件大小为 0，请检查数据是否生成正确'));
+    }
+    if (!filename) {
+        return Promise.reject(new Error('文件名缺失'));
+    }
+    var url = UPLOAD_URL + '?type=' + encodeURIComponent(type);
+    var formData = new FormData();
+    formData.append('media', blob, filename);
+    return fetch(url, {
+        method: 'POST',
+        body: formData
+    }).then(function(resp) {
+        if (!resp.ok) {
+            return resp.text().then(function(text) {
+                throw new Error('上传失败: ' + text);
             });
         }
-
+        return resp.json();
+    }).then(function(json) {
+        if (json.errcode !== 0) {
+            throw new Error(json.errmsg || '上传失败，errcode: ' + json.errcode);
+        }
+        return json.media_id;
+    });
+}
         // 发送 Markdown 消息
         function sendMarkdown(content) {
             var payload = {
@@ -2026,69 +2028,69 @@
             });
         }
 
-        function generateScreenshotBlob() {
-            return new Promise(function(resolve, reject) {
-                var dataStr = document.getElementById('segmentResult').dataset.data;
-                if (!dataStr) {
-                    reject(new Error('无数据，请先点击"计算累计"'));
-                    return;
-                }
-                var data = JSON.parse(dataStr);
-                if (!data.items || !data.items.length) {
-                    reject(new Error('无有效数据'));
-                    return;
-                }
-
-                var groups = {};
-                data.items.forEach(function(item) {
-                    var m = item.machine || '未指定';
-                    if (!groups[m]) groups[m] = [];
-                    groups[m].push(item);
-                });
-                var html = '', tTime = 0, tWet = 0, tDry = 0;
-                Object.keys(groups).forEach(function(m) {
-                    var items = groups[m], subT = 0, subW = 0, subD = 0;
-                    html += '<div style="background:#dbeafe;padding:3px 8px;border-radius:4px;margin-top:4px;font-weight:600;border-left:3px solid #3b82f6;">📌 重板 ' + m + '</div>';
-                    items.forEach(function(it, idx) {
-                        subT += it.hours; subW += it.wet; subD += it.dry;
-                        html += '<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;border-bottom:1px dashed #e2e8f0;"><span>时段' + (idx+1) + ' (' + it.start + '-' + it.end + ', ' + it.freq + 'Hz)</span><span>湿 ' + fmt(it.wet,2) + 't / 干 ' + fmt(it.dry,2) + 't</span></div>';
-                    });
-                    html += '<div style="background:#f1f5f9;padding:3px 8px;margin:2px 0 6px;">小计：' + fmt(subT,2) + 'h，湿 ' + fmt(subW,2) + 't，干 ' + fmt(subD,2) + 't</div>';
-                    tTime += subT; tWet += subW; tDry += subD;
-                });
-                html += '<div style="background:#dbeafe;padding:5px 8px;border-radius:6px;margin-top:6px;font-weight:700;text-align:center;border:1px solid #93c5fd;">📊 总计：时长 ' + fmt(tTime,2) + 'h，湿矿 ' + fmt(tWet,2) + 't，干矿 ' + fmt(tDry,2) + 't</div>';
-
-                var container = document.createElement('div');
-                container.style.cssText = 'position:fixed;left:-9999px;width:440px;padding:24px 24px 20px;background:#fff;font-family:sans-serif;z-index:9999;border-radius:16px;';
-                container.innerHTML = '<div style="text-align:center;margin-bottom:14px;padding-bottom:12px;border-bottom:3px solid #3b82f6;"><div style="font-size:20px;font-weight:700;">📊 给矿量累计报表</div><div style="font-size:12px;color:#94a3b8;">' + new Date().toLocaleString('zh-CN', { hour12: false }) + '</div></div><div style="font-size:13px;color:#475569;line-height:1.7;">' + html + '</div><div style="margin-top:14px;padding-top:12px;border-top:2px solid #3b82f6;display:flex;justify-content:space-between;font-weight:700;font-size:15px;"><span>📊 总计</span><span>时长 ' + fmt(tTime,2) + ' ｜ 湿矿 ' + fmt(tWet,2) + ' ｜ 干矿 ' + fmt(tDry,2) + '</span></div><div style="text-align:center;font-size:10px;color:#94a3b8;margin-top:10px;">重板给料机 · 给矿量报表</div>';
-                document.body.appendChild(container);
-
-                html2canvas(container, {
-                    scale: 2.5,
-                    useCORS: true,
-                    backgroundColor: '#fff',
-                    logging: false,
-                    width: 440,
-                }).then(function(canvas) {
-                    document.body.removeChild(container);
-                    return new Promise(function(res) {
-                        canvas.toBlob(function(blob) {
-                            res(blob);
-                        }, 'image/png');
-                    });
-                }).then(function(blob) {
-                    if (!blob) {
-                        reject(new Error('生成图片失败，返回空数据'));
-                        return;
-                    }
-                    resolve(blob);
-                }).catch(function(err) {
-                    document.body.removeChild(container);
-                    reject(err);
-                });
-            });
+function generateScreenshotBlob() {
+    return new Promise(function(resolve, reject) {
+        var dataStr = document.getElementById('segmentResult').dataset.data;
+        if (!dataStr) {
+            reject(new Error('无数据，请先点击"计算累计"'));
+            return;
+        }
+        var data = JSON.parse(dataStr);
+        if (!data.items || !data.items.length) {
+            reject(new Error('无有效数据'));
+            return;
         }
 
+        // 构建报表 HTML（省略，与之前相同，但为了完整性保留）
+        var groups = {};
+        data.items.forEach(function(item) {
+            var m = item.machine || '未指定';
+            if (!groups[m]) groups[m] = [];
+            groups[m].push(item);
+        });
+        var html = '', tTime = 0, tWet = 0, tDry = 0;
+        Object.keys(groups).forEach(function(m) {
+            var items = groups[m], subT = 0, subW = 0, subD = 0;
+            html += '<div style="background:#dbeafe;padding:3px 8px;border-radius:4px;margin-top:4px;font-weight:600;border-left:3px solid #3b82f6;">📌 重板 ' + m + '</div>';
+            items.forEach(function(it, idx) {
+                subT += it.hours; subW += it.wet; subD += it.dry;
+                html += '<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;border-bottom:1px dashed #e2e8f0;"><span>时段' + (idx+1) + ' (' + it.start + '-' + it.end + ', ' + it.freq + 'Hz)</span><span>湿 ' + fmt(it.wet,2) + 't / 干 ' + fmt(it.dry,2) + 't</span></div>';
+            });
+            html += '<div style="background:#f1f5f9;padding:3px 8px;margin:2px 0 6px;">小计：' + fmt(subT,2) + 'h，湿 ' + fmt(subW,2) + 't，干 ' + fmt(subD,2) + 't</div>';
+            tTime += subT; tWet += subW; tDry += subD;
+        });
+        html += '<div style="background:#dbeafe;padding:5px 8px;border-radius:6px;margin-top:6px;font-weight:700;text-align:center;border:1px solid #93c5fd;">📊 总计：时长 ' + fmt(tTime,2) + 'h，湿矿 ' + fmt(tWet,2) + 't，干矿 ' + fmt(tDry,2) + 't</div>';
+
+        var container = document.createElement('div');
+        container.style.cssText = 'position:fixed;left:-9999px;width:440px;padding:24px 24px 20px;background:#fff;font-family:sans-serif;z-index:9999;border-radius:16px;';
+        container.innerHTML = '<div style="text-align:center;margin-bottom:14px;padding-bottom:12px;border-bottom:3px solid #3b82f6;"><div style="font-size:20px;font-weight:700;">📊 给矿量累计报表</div><div style="font-size:12px;color:#94a3b8;">' + new Date().toLocaleString('zh-CN', { hour12: false }) + '</div></div><div style="font-size:13px;color:#475569;line-height:1.7;">' + html + '</div><div style="margin-top:14px;padding-top:12px;border-top:2px solid #3b82f6;display:flex;justify-content:space-between;font-weight:700;font-size:15px;"><span>📊 总计</span><span>时长 ' + fmt(tTime,2) + ' ｜ 湿矿 ' + fmt(tWet,2) + ' ｜ 干矿 ' + fmt(tDry,2) + '</span></div><div style="text-align:center;font-size:10px;color:#94a3b8;margin-top:10px;">重板给料机 · 给矿量报表</div>';
+        document.body.appendChild(container);
+
+        html2canvas(container, {
+            scale: 2.5,
+            useCORS: true,
+            backgroundColor: '#fff',
+            logging: false,
+            width: 440,
+        }).then(function(canvas) {
+            document.body.removeChild(container);
+            return new Promise(function(res) {
+                canvas.toBlob(function(blob) {
+                    res(blob);
+                }, 'image/png');
+            });
+        }).then(function(blob) {
+            if (!blob || blob.size === 0) {
+                reject(new Error('生成图片失败，文件为空'));
+                return;
+            }
+            resolve(blob);
+        }).catch(function(err) {
+            document.body.removeChild(container);
+            reject(err);
+        });
+    });
+}
         // ----- 3. 分享 Excel（修复：filename 未定义） -----
         function shareCurrentExcelWrapper() {
             var record = getCurrentRecord();
