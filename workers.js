@@ -36,13 +36,12 @@ export default {
       const type = url.searchParams.get('type') || 'file';
       const uploadUrl = UPLOAD_BASE + '&type=' + encodeURIComponent(type);
 
-      // 关键：直接转发请求体，保留 Content-Type（含 boundary）
       const newRequest = new Request(uploadUrl, {
         method: 'POST',
         headers: {
           'Content-Type': request.headers.get('Content-Type') || 'multipart/form-data'
         },
-        body: request.body  // 流式转发，不解析
+        body: request.body
       });
 
       const resp = await fetch(newRequest);
