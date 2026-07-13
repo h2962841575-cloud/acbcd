@@ -574,7 +574,7 @@
 
 <script>
     (function() {
-        var CURRENT_VERSION = '3.0.20260713';
+        var CURRENT_VERSION = '3.1.20260714';
         var storedVersion = localStorage.getItem('app_version');
         if (storedVersion !== CURRENT_VERSION) {
             localStorage.setItem('app_version', CURRENT_VERSION);
@@ -587,9 +587,11 @@
 
         var WIDTH = 1.73, TRUE_DENSITY = 3.42, CONST_TERM = 760653 / 772512500;
         var STORE_KEY = 'feederAppData';
-        // 内置 Webhook 地址
-        var WEBHOOK_URL = 'https://webhook-proxy.h2962841575.workers.dev';
-        var WEBHOOK_KEY = WEBHOOK_URL.split('key=')[1] || '';
+
+        // ========== 关键修改：所有请求都走 Cloudflare Worker 代理 ==========
+        var WORKER_BASE = 'https://webhook-proxy.h2962841575.workers.dev';
+        var WEBHOOK_URL = WORKER_BASE + '/send';    // 发送消息
+        var UPLOAD_URL = WORKER_BASE + '/upload';   // 上传文件
 
         function getDefaultStore() {
             var now = new Date(); var h = now.getHours(); var shift = (h >= 7 && h < 19) ? 'day' : 'night';
@@ -1430,10 +1432,8 @@
                 }).then(function(canvas) {
                     document.body.removeChild(overlay);
                     document.body.removeChild(container);
-                    // 返回 canvas 以便后续使用
                     return canvas;
                 }).then(function(canvas) {
-                    // 这里直接展示下载弹窗
                     showScreenshotImage(canvas);
                 }).catch(function(err) {
                     document.body.removeChild(overlay);
@@ -1799,9 +1799,9 @@
 
         // ========== 企业微信分享核心功能 ==========
 
-        // 上传文件到企业微信获取 media_id
+        // 上传文件到企业微信获取 media_id（通过 Worker 代理）
         function uploadMedia(blob, filename, type) {
-            var url = 'https://qyapi.weixin.qq.com/cgi-bin/webhook/upload_media?key=' + WEBHOOK_KEY + '&type=' + type;
+            var url = UPLOAD_URL + '?type=' + encodeURIComponent(type);
             var formData = new FormData();
             formData.append('media', blob, filename);
             return fetch(url, {
@@ -1817,13 +1817,11 @@
             });
         }
 
-        // 发送纯文本/Markdown 消息
+        // 发送 Markdown 消息（通过 Worker）
         function sendMarkdown(content) {
             var payload = {
                 msgtype: 'markdown',
-                markdown: {
-                    content: content
-                }
+                markdown: { content: content }
             };
             return fetch(WEBHOOK_URL, {
                 method: 'POST',
@@ -1839,13 +1837,11 @@
             });
         }
 
-        // 发送图片消息（需要 media_id）
+        // 发送图片消息（通过 Worker）
         function sendImage(mediaId) {
             var payload = {
                 msgtype: 'image',
-                image: {
-                    media_id: mediaId
-                }
+                image: { media_id: mediaId }
             };
             return fetch(WEBHOOK_URL, {
                 method: 'POST',
@@ -1861,13 +1857,11 @@
             });
         }
 
-        // 发送文件消息（需要 media_id）
+        // 发送文件消息（通过 Worker）
         function sendFile(mediaId) {
             var payload = {
                 msgtype: 'file',
-                file: {
-                    media_id: mediaId
-                }
+                file: { media_id: mediaId }
             };
             return fetch(WEBHOOK_URL, {
                 method: 'POST',
@@ -1911,7 +1905,7 @@
             return lines.join('\n');
         }
 
-        // 获取当前累计数据对象（复用）
+        // 获取当前累计数据对象
         function getCurrentRecord() {
             var dataStr = document.getElementById('segmentResult').dataset.data;
             if (!dataStr) return null;
@@ -1931,9 +1925,7 @@
             };
         }
 
-        // 确认弹窗统一管理
-        var pendingShareAction = null;
-
+        // 确认弹窗
         function showConfirmDialog(title, sub, previewText, onConfirm) {
             var overlay = document.getElementById('confirmOverlay');
             document.getElementById('confirmTitle').textContent = title;
@@ -1971,14 +1963,11 @@
                 sendBtn.disabled = false;
                 sendBtn.textContent = '✅ 确认发送';
                 document.getElementById('confirmStatus').textContent = '';
-                if (pendingShareAction) {
-                    pendingShareAction = null;
-                }
             };
             overlay.onclick = function(e) { if (e.target === overlay) cancelBtn.onclick(); };
         }
 
-        // ----- 1. 分享文本（Markdown）-----
+        // ----- 分享文本 -----
         function shareText(record, type) {
             var msg = buildShareMessage(record, type);
             showConfirmDialog('📤 确认发送文本到群', '即将发送以下 Markdown 消息：', msg, function(onSuccess, onError) {
@@ -2002,20 +1991,16 @@
             shareText(record, 'current');
         }
 
-        // ----- 2. 分享截图（图片）-----
+        // ----- 分享截图 -----
         function shareCurrentScreenshot() {
             var record = getCurrentRecord();
             if (!record) { alert('请先点击"计算累计"生成结果'); return; }
             if (typeof html2canvas === 'undefined') { alert('截屏库未加载，请检查网络后重试'); return; }
 
-            // 先显示提示
             showConfirmDialog('🖼️ 准备生成并发送截图', '正在生成截图，请稍候...', '生成截图需要几秒钟，完成后会自动上传并发送。', function(onSuccess, onError) {
-                // 实际执行生成截图
                 generateScreenshotBlob().then(function(blob) {
-                    // 上传获取 media_id
                     return uploadMedia(blob, '重板下料截图.png', 'image');
                 }).then(function(mediaId) {
-                    // 发送图片
                     return sendImage(mediaId);
                 }).then(function() {
                     onSuccess();
@@ -2029,7 +2014,6 @@
 
         function generateScreenshotBlob() {
             return new Promise(function(resolve, reject) {
-                // 复用截图生成逻辑，但返回 Blob
                 var data = JSON.parse(document.getElementById('segmentResult').dataset.data);
                 if (!data || !data.items || !data.items.length) {
                     reject(new Error('无有效数据'));
@@ -2082,15 +2066,14 @@
             });
         }
 
-        // ----- 3. 分享 Excel（文件）-----
-        function shareCurrentExcel() {
+        // ----- 分享 Excel -----
+        function shareCurrentExcelWrapper() {
             var record = getCurrentRecord();
             if (!record) { alert('请先点击"计算累计"生成结果'); return; }
             if (typeof XLSX === 'undefined') { alert('Excel库未加载，请检查网络后重试'); return; }
 
-            showConfirmDialog('📊 准备生成并发送 Excel 文件', '正在生成 Excel 文件，请稍候...', '将生成包含当前时段明细的 .xlsx 文件并发送到群。', function(onSuccess, onError) {
+            showConfirmDialog('📊 确认发送 Excel 文件到群', '即将生成并发送包含当前时段明细的 Excel 文件。', '文件包含：重板、时段、频率、时长、湿矿量、干矿量。', function(onSuccess, onError) {
                 try {
-                    // 构建 Excel 数据
                     var data = JSON.parse(document.getElementById('segmentResult').dataset.data);
                     var rows = [];
                     data.items.forEach(function(item, idx) {
@@ -2105,7 +2088,6 @@
                             '干矿量(t)': Number(item.dry.toFixed(2))
                         });
                     });
-                    // 添加总计行
                     rows.push({
                         '序号': '总计',
                         '重板': '',
@@ -2125,73 +2107,19 @@
                     var blob = new Blob([wbout], { type: 'application/octet-stream' });
                     var filename = '重板给矿量_' + new Date().toISOString().slice(0,10) + '.xlsx';
 
-                    return uploadMedia(blob, filename, 'file');
-                } catch (e) {
-                    throw new Error('生成 Excel 失败：' + e.message);
-                }
-            }).then(function(mediaId) {
-                return sendFile(mediaId);
-            }).then(function() {
-                onSuccess();
-                showToast('📊 Excel 已发送');
-            }).catch(function(err) {
-                onError(err);
-                alert('发送 Excel 失败：' + err.message);
-            });
-        }
-
-        // 修正上面的 shareCurrentExcel 因为 showConfirmDialog 包装了异步，需要重构一下
-        // 重构：独立的执行函数
-        function executeShareExcel(onSuccess, onError) {
-            try {
-                var data = JSON.parse(document.getElementById('segmentResult').dataset.data);
-                var rows = [];
-                data.items.forEach(function(item, idx) {
-                    rows.push({
-                        '序号': idx + 1,
-                        '重板': item.machine || '--',
-                        '开始时间': item.start,
-                        '结束时间': item.end,
-                        '频率(Hz)': item.freq,
-                        '运行时长(h)': Number(item.hours.toFixed(2)),
-                        '湿矿量(t)': Number(item.wet.toFixed(2)),
-                        '干矿量(t)': Number(item.dry.toFixed(2))
+                    uploadMedia(blob, filename, 'file').then(function(mediaId) {
+                        return sendFile(mediaId);
+                    }).then(function() {
+                        onSuccess();
+                        showToast('📊 Excel 已发送');
+                    }).catch(function(err) {
+                        onError(err);
+                        alert('发送 Excel 失败：' + err.message);
                     });
-                });
-                rows.push({
-                    '序号': '总计',
-                    '重板': '',
-                    '开始时间': '',
-                    '结束时间': '',
-                    '频率(Hz)': '',
-                    '运行时长(h)': Number(data.totalTime.toFixed(2)),
-                    '湿矿量(t)': Number(data.totalWet.toFixed(2)),
-                    '干矿量(t)': Number(data.totalDry.toFixed(2))
-                });
-                var ws = XLSX.utils.json_to_sheet(rows);
-                var wb = XLSX.utils.book_new();
-                XLSX.utils.book_append_sheet(wb, ws, '给矿量明细');
-                var wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-                var blob = new Blob([wbout], { type: 'application/octet-stream' });
-                var filename = '重板给矿量_' + new Date().toISOString().slice(0,10) + '.xlsx';
-                uploadMedia(blob, filename, 'file').then(function(mediaId) {
-                    return sendFile(mediaId);
-                }).then(function() {
-                    onSuccess();
-                }).catch(function(err) {
-                    onError(err);
-                });
-            } catch (e) {
-                onError(e);
-            }
-        }
-
-        function shareCurrentExcelWrapper() {
-            var record = getCurrentRecord();
-            if (!record) { alert('请先点击"计算累计"生成结果'); return; }
-            if (typeof XLSX === 'undefined') { alert('Excel库未加载，请检查网络后重试'); return; }
-            showConfirmDialog('📊 确认发送 Excel 文件到群', '即将生成并发送包含当前时段明细的 Excel 文件。', '文件包含：重板、时段、频率、时长、湿矿量、干矿量。', function(onSuccess, onError) {
-                executeShareExcel(onSuccess, onError);
+                } catch (e) {
+                    onError(e);
+                    alert('生成 Excel 失败：' + e.message);
+                }
             });
         }
 
@@ -2287,12 +2215,11 @@
             document.getElementById('saveSegmentResultBtn').addEventListener('click', saveSegmentResult);
             document.getElementById('screenshotSegResultBtn').addEventListener('click', screenshotResult);
             document.getElementById('copySegResultBtn').addEventListener('click', copySegResultText);
-            
-            // 分享按钮绑定
+
             document.getElementById('shareSegResultBtn').addEventListener('click', shareCurrentText);
             document.getElementById('shareScreenshotBtn').addEventListener('click', shareCurrentScreenshot);
             document.getElementById('shareExcelBtn').addEventListener('click', shareCurrentExcelWrapper);
-            
+
             document.getElementById('exportHistoryBtn').addEventListener('click', exportHistoryExcel);
             document.getElementById('clearHistoryBtn').addEventListener('click', clearAllHistory);
             document.getElementById('undoDeleteBtn').addEventListener('click', undoDelete);
