@@ -17,7 +17,7 @@ export default {
       return new Response(null, { headers: CORS_HEADERS });
     }
 
-    // 发送文本消息（markdown）
+    // 发送文本消息
     if (path === '/send') {
       const resp = await fetch(SEND_URL, {
         method: 'POST',
@@ -31,14 +31,20 @@ export default {
       });
     }
 
-    // 上传文件（图片、Excel、文件等）
+    // 上传文件（图片、Excel 等）
     if (path === '/upload') {
       const type = url.searchParams.get('type') || 'file';
       const uploadUrl = UPLOAD_BASE + '&type=' + encodeURIComponent(type);
 
-      // 关键修复：不要手动设置 Content-Type，让 fetch 根据 body 自动生成（包含正确的 boundary）
+      // 复制原始请求头，保留正确的 Content-Type（含 boundary）
+      const newHeaders = new Headers(request.headers);
+      // 删除可能冲突的头
+      newHeaders.delete('host');
+      newHeaders.delete('connection');
+
       const newRequest = new Request(uploadUrl, {
         method: 'POST',
+        headers: newHeaders,
         body: request.body
       });
 
