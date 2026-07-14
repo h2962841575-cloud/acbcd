@@ -620,18 +620,21 @@ async function generateSignature(message) {
 async function signedFetch(url, options) {
     const ts = Math.floor(Date.now() / 1000).toString();
     const newOptions = { ...options };
-    const contentType = (newOptions.headers && newOptions.headers['Content-Type']) || '';
-
+    
+    // 判断 body 是否为 FormData 实例（准确判断上传）
+    const isFormData = (newOptions.body instanceof FormData);
     let message = ts + ':';
-    if (contentType.includes('multipart/form-data')) {
-        // 上传文件：消息 = 时间戳 + 文件大小
-        const body = newOptions.body;
-        const fileSize = (body instanceof FormData && body.get('media')) ? body.get('media').size : 0;
+    
+    if (isFormData) {
+        // 上传文件：签名消息 = 时间戳 + 文件大小
+        const mediaBlob = newOptions.body.get('media');
+        const fileSize = mediaBlob ? mediaBlob.size : 0;
         message += fileSize.toString();
+        // 添加自定义头，让 Worker 也能获取文件大小
         newOptions.headers = newOptions.headers || {};
         newOptions.headers['X-File-Size'] = fileSize.toString();
     } else {
-        // 普通请求：消息 = 时间戳 + 请求体
+        // 普通请求：签名消息 = 时间戳 + 请求体
         const bodyText = newOptions.body || '';
         message += bodyText;
     }
