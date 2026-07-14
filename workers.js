@@ -13,11 +13,12 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
+    // 处理预检请求
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: CORS_HEADERS });
     }
 
-    // 发送文本消息
+    // ---- 发送文本/消息（无改动） ----
     if (path === '/send') {
       const resp = await fetch(SEND_URL, {
         method: 'POST',
@@ -31,23 +32,30 @@ export default {
       });
     }
 
-    // 上传文件（图片、Excel 等）
+    // ---- 上传文件（图片、Excel 等）修正版 ----
     if (path === '/upload') {
       const type = url.searchParams.get('type') || 'file';
       const uploadUrl = UPLOAD_BASE + '&type=' + encodeURIComponent(type);
 
-      // 复制原始请求头，保留正确的 Content-Type（含 boundary）
+      // 1. 完整读取请求体（二进制）
+      const bodyBuffer = await request.arrayBuffer();
+
+      // 2. 复制并修正请求头
       const newHeaders = new Headers(request.headers);
-      // 删除可能冲突的头
+      // 必须设置 Content-Length
+      newHeaders.set('Content-Length', bodyBuffer.byteLength);
+      // 删除可能干扰的头部
       newHeaders.delete('host');
       newHeaders.delete('connection');
 
+      // 3. 构建新请求，使用 ArrayBuffer 作为 body
       const newRequest = new Request(uploadUrl, {
         method: 'POST',
         headers: newHeaders,
-        body: request.body
+        body: bodyBuffer
       });
 
+      // 4. 发送并返回企业微信响应
       const resp = await fetch(newRequest);
       const data = await resp.text();
       return new Response(data, {
