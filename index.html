@@ -11,6 +11,7 @@
     </script>
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js">
     </script>
+    <script src="https://cdn.jsdelivr.net/npm/spark-md5@3.0.2/spark-md5.min.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -2003,7 +2004,7 @@ function showConfirmWithPreview(title, sub, previewHtml, onConfirm, onCancel) {
     });
 }
 
- function shareCurrentScreenshot() {
+function shareCurrentScreenshot() {
     var record = getCurrentRecord();
     if (!record) { alert('请先点击"计算累计"生成结果'); return; }
     if (typeof html2canvas === 'undefined') { alert('截屏库未加载，请检查网络后重试'); return; }
@@ -2028,33 +2029,52 @@ function showConfirmWithPreview(title, sub, previewHtml, onConfirm, onCancel) {
                 previewHtml,
                 function(onSuccess, onError) {
                     showProgress('正在处理图片...', 10);
-                    var base64 = result.dataUrl.split(',')[1];
-                    // 只发送 base64，不发送 md5（企业微信允许省略）
-                    var payload = {
-                        msgtype: 'image',
-                        image: {
-                            base64: base64
+                    // 1. 使用 FileReader 读取 Blob 的二进制数据
+                    var reader = new FileReader();
+                    reader.onload = function(e) {
+                        try {
+                            // e.target.result 是一个 ArrayBuffer
+                            var arrayBuffer = e.target.result;
+                            var bytes = new Uint8Array(arrayBuffer);
+
+                            // 2. 计算 MD5 (使用 SparkMD5 或类似库)
+                            // 注意：由于 SubtleCrypto 不支持 MD5，这里使用第三方库
+                            // 你需要在 HTML 中引入 spark-md5 库
+                            // <script src="https://cdn.jsdelivr.net/npm/spark-md5@3.0.2/spark-md5.min.js"></script>
+                            var spark = new SparkMD5.ArrayBuffer();
+                            spark.append(arrayBuffer);
+                            var md5 = spark.end();
+
+                            // 3. 计算 Base64 (从原始二进制数据)
+                            // 将 Uint8Array 转换为 Base64 字符串
+                            var base64 = btoa(String.fromCharCode.apply(null, bytes));
+
+                            // 4. 构建 payload
+                            var payload = {
+                                msgtype: 'image',
+                                image: {
+                                    base64: base64,
+                                    md5: md5
+                                }
+                            };
+
+                            updateProgress('正在发送图片...', 50);
+                            return fetch(WEBHOOK_URL, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload)
+                            });
+                        } catch (err) {
+                            hideProgress();
+                            onError(err);
+                            alert('处理图片数据失败：' + err.message);
                         }
                     };
-                    updateProgress('正在发送图片...', 50);
-                    fetch(WEBHOOK_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    })
-                    .then(function(resp) { return resp.json(); })
-                    .then(function(json) {
-                        if (json.errcode !== 0) throw new Error(json.errmsg || '发送失败');
-                        updateProgress('发送成功！', 100);
-                        setTimeout(hideProgress, 800);
-                        onSuccess();
-                        showToast('🖼️ 截图已发送');
-                    })
-                    .catch(function(err) {
+                    reader.onerror = function() {
                         hideProgress();
-                        onError(err);
-                        alert('发送失败：' + err.message);
-                    });
+                        onError(new Error('读取图片数据失败'));
+                    };
+                    reader.readAsArrayBuffer(result.blob);
                 },
                 function() {}
             );
