@@ -2003,21 +2003,7 @@ function showConfirmWithPreview(title, sub, previewHtml, onConfirm, onCancel) {
     });
 }
 
-        function shareCurrentScreenshot() {
-    var record = getCurrentRecord();
-    if (!record) { alert('请先点击"计算累计"生成结果'); return; }
-    if (typeof html2canvas === 'undefined') { alert('截屏库未加载，请检查网络后重试'); return; }
-
-    // 1. 直接开始生成截图，显示进度
-    showProgress('正在生成截图...', 0);
-    var progressInterval = setInterval(function() {
-        var current = parseInt(document.getElementById('progressFill').style.width) || 0;
-        if (current < 80) {
-            updateProgress('正在生成截图...', current + 5);
-        }
-    }, 300);
-
-  function shareCurrentScreenshot() {
+ function shareCurrentScreenshot() {
     var record = getCurrentRecord();
     if (!record) { alert('请先点击"计算累计"生成结果'); return; }
     if (typeof html2canvas === 'undefined') { alert('截屏库未加载，请检查网络后重试'); return; }
@@ -2030,7 +2016,7 @@ function showConfirmWithPreview(title, sub, previewHtml, onConfirm, onCancel) {
         }
     }, 300);
 
-    // 修正：使用正确的函数名 generateScreenshotData
+    // 【关键修复】使用正确的函数名 generateScreenshotData
     generateScreenshotData().then(function(result) {
         clearInterval(progressInterval);
         updateProgress('生成完成', 100);
