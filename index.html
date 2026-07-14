@@ -282,7 +282,6 @@
         }
         .reminder-dialog p { font-size: 15px; color: #1e293b; line-height: 1.6; margin-bottom: 20px; }
         .reminder-dialog .btn { width: 100%; }
-        /* 进度弹窗样式 */
         .progress-overlay {
             position: fixed; top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center;
@@ -453,6 +452,7 @@
             <div class="result-item"><span class="label">运行时长</span><span class="value" id="invHours">—</span></div>
             <div class="result-item"><span class="label">干矿速率</span><span class="value dry" id="invDryRate">—</span></div>
             <div class="result-item"><span class="label">湿矿速率</span><span class="value wet" id="invWetRate">—</span></div>
+            <div class="result-item"><span class="label" id="inverseSuccess" style="color:#059669;font-weight:400;"></span></div>
         </div>
     </div>
 
@@ -538,7 +538,6 @@
     <div class="note" style="margin-top:8px;">带速=0.002×f−760653/772512500 · 频率>0.5Hz有效 · 数据实时保存</div>
 </div>
 
-<!-- 确认发送弹窗 -->
 <div class="confirm-overlay" id="confirmOverlay">
     <div class="confirm-box">
         <h3 id="confirmTitle">📤 确认发送到企业微信群</h3>
@@ -577,7 +576,6 @@
     </div>
 </div>
 
-<!-- 进度弹窗（含百分比） -->
 <div class="progress-overlay" id="progressOverlay">
     <div class="progress-text" id="progressText">准备中...</div>
     <div class="progress-bar-container">
@@ -587,8 +585,7 @@
 
 <script>
     (function() {
-        // 版本控制
-        var CURRENT_VERSION = '3.3.20260715';
+        var CURRENT_VERSION = '3.4.20260715';
         var storedVersion = localStorage.getItem('app_version');
         if (storedVersion !== CURRENT_VERSION) {
             localStorage.setItem('app_version', CURRENT_VERSION);
@@ -601,13 +598,28 @@
 
         var WIDTH = 1.73, TRUE_DENSITY = 3.42, CONST_TERM = 760653 / 772512500;
         var STORE_KEY = 'feederAppData';
-
-        // Cloudflare Worker 代理（请替换为你的实际 Worker 地址）
         var WORKER_BASE = 'https://webhook-proxy.h2962841575.workers.dev';
         var WEBHOOK_URL = WORKER_BASE + '/send';
         var UPLOAD_URL = WORKER_BASE + '/upload';
 
-        // 默认数据
+        var saveTimer = null;
+        function saveData() {
+            clearTimeout(saveTimer);
+            saveTimer = setTimeout(function() {
+                try {
+                    localStorage.setItem(STORE_KEY, JSON.stringify(appData));
+                    var s = document.getElementById('appStatus');
+                    s.textContent = '● 已保存';
+                    s.style.color = '#059669';
+                    setTimeout(function() { s.style.color = '#94a3b8'; }, 2000);
+                } catch(e) {}
+            }, 300);
+        }
+        window.addEventListener('beforeunload', function() {
+            if (saveTimer) clearTimeout(saveTimer);
+            localStorage.setItem(STORE_KEY, JSON.stringify(appData));
+        });
+
         function getDefaultStore() {
             var now = new Date(); var h = now.getHours(); var shift = (h >= 7 && h < 19) ? 'day' : 'night';
             return {
@@ -629,7 +641,6 @@
             };
         }
 
-        // 加载数据
         var appData = (function() {
             try {
                 var raw = localStorage.getItem(STORE_KEY);
@@ -648,16 +659,6 @@
             return getDefaultStore();
         })();
 
-        function saveData() {
-            try {
-                localStorage.setItem(STORE_KEY, JSON.stringify(appData));
-                document.getElementById('appStatus').textContent = '● 已保存';
-                document.getElementById('appStatus').style.color = '#059669';
-                setTimeout(function() { document.getElementById('appStatus').style.color = '#94a3b8'; }, 2000);
-            } catch(e) {}
-        }
-
-        // 工具函数
         function fmt(v, d) { return (v === undefined || v === null || !isFinite(v)) ? '--' : Number(v.toFixed(d)); }
         function fmtPct(v) { return isNaN(v) ? '--' : (v * 100).toFixed(2) + '%'; }
         function timeToHours(h, m) { return h + m / 60; }
@@ -672,7 +673,6 @@
             return appData.machineParams[machine];
         }
 
-        // 含水率计算
         function getEffectiveWater(bulk) {
             var val = document.getElementById('defMoisture').value.trim();
             if (val !== '') { var n = parseFloat(val); if (!isNaN(n) && n >= 0 && n <= 100) return { water: n / 100, source: '自定义' }; }
@@ -683,7 +683,25 @@
             return { water: NaN, source: '无效' };
         }
 
-        // 核心计算
+        function getSegmentWater(seg) {
+            var machine = seg.machine || getCurrentMachine();
+            var tmpl = getMachineParams(machine).moisture;
+            if (seg.moisture && seg.moisture.trim() !== '') {
+                var n = parseFloat(seg.moisture);
+                if (!isNaN(n) && n >= 0 && n <= 100) return { water: n / 100, source: '自定义' };
+            }
+            if (tmpl && tmpl.trim() !== '') {
+                var n2 = parseFloat(tmpl);
+                if (!isNaN(n2) && n2 >= 0 && n2 <= 100) return { water: n2 / 100, source: '模板' };
+            }
+            var b = seg.bulk || 0;
+            if (b > 0 && b < TRUE_DENSITY) {
+                var w = (TRUE_DENSITY - b) / ((TRUE_DENSITY - 1) * b);
+                return { water: w, source: '公式反推' };
+            }
+            return { water: NaN, source: '无效' };
+        }
+
         function calcThroughput(height, freq, bulk, water) {
             if (isNaN(water) || !isFinite(water) || height <= 0 || bulk <= 0) return { wet: NaN, dry: NaN, speed: NaN };
             var speed = 0.002 * freq - CONST_TERM;
@@ -700,7 +718,6 @@
             return { freq: (targetDry / hours / denom + CONST_TERM) / 0.002 };
         }
 
-        // 模板管理
         function loadMachineParams(machine) {
             var p = getMachineParams(machine);
             document.getElementById('defHeight').value = p.height;
@@ -749,7 +766,6 @@
             });
         }
 
-        // 班次管理
         function initShift() {
             var shift = appData.shift || 'day';
             document.querySelectorAll('.shift-selector .sbtn').forEach(function(b) {
@@ -797,7 +813,6 @@
             if (mEl) mEl.value = t.m;
         }
 
-        // 时段管理
         function getSegments() { return appData.segments || []; }
         function saveSegments(segs) { appData.segments = segs; renderSegments(); updateSegStats(); saveData(); }
 
@@ -869,7 +884,6 @@
             showToast('已清空');
         }
 
-        // 渲染时段卡片（完整版）
         function renderSegments() {
             var segs = getSegments();
             var container = document.getElementById('segmentsContainer');
@@ -900,7 +914,7 @@
                 var isBDef = (b === p.bulk);
                 var isMDef = (m === p.moisture || (m === '' && p.moisture === ''));
 
-                var waterInfo = getEffectiveWater(b);
+                var waterInfo = getSegmentWater(s);
                 var water = waterInfo.water;
                 var mTag = '';
                 var mTagClass = 'param-tag';
@@ -909,7 +923,7 @@
                         mTag = fmtPct(water) + '（反推）';
                         mTagClass += ' gray-tag';
                     } else if (m === '' && p.moisture !== '') {
-                        mTag = '（默认）';
+                        mTag = '（模板）';
                         mTagClass += ' default-tag';
                     } else if (m !== '') {
                         mTag = '';
@@ -1037,7 +1051,6 @@
                 });
             });
 
-            // 左滑操作
             container.querySelectorAll('.time-segment').forEach(function(seg) {
                 var startX = 0, startY = 0, isDragging = false;
                 seg.addEventListener('touchstart', function(e) {
@@ -1056,7 +1069,8 @@
                 }, { passive: true });
                 seg.addEventListener('touchend', function() {
                     if (!isDragging) return;
-                    setTimeout(function() { seg.classList.remove('swipe-left'); }, 3000);
+                    if (seg._swipeTimer) clearTimeout(seg._swipeTimer);
+                    seg._swipeTimer = setTimeout(function() { seg.classList.remove('swipe-left'); }, 3000);
                 });
 
                 seg.querySelector('.swipe-del').addEventListener('click', function() {
@@ -1103,7 +1117,7 @@
                 tags[0].className = 'param-tag' + (isHDef ? ' default-tag' : '');
                 tags[1].textContent = isBDef ? '（默认）' : '';
                 tags[1].className = 'param-tag' + (isBDef ? ' default-tag' : '');
-                var waterInfo = getEffectiveWater(seg.bulk || 0);
+                var waterInfo = getSegmentWater(seg);
                 var water = waterInfo.water;
                 var mTag = '';
                 var mTagClass = 'param-tag';
@@ -1112,7 +1126,7 @@
                         mTag = fmtPct(water) + '（反推）';
                         mTagClass += ' gray-tag';
                     } else if (seg.moisture === '' && p.moisture !== '') {
-                        mTag = '（默认）';
+                        mTag = '（模板）';
                         mTagClass += ' default-tag';
                     } else if (seg.moisture !== '') {
                         mTag = '';
@@ -1133,7 +1147,7 @@
             var endStr = (seg.endH !== null && seg.endH !== '') ? String(seg.endH).padStart(2,'0') + ':' + String(seg.endM).padStart(2,'0') : '--:--';
             var info = el.querySelector('.seg-info');
             if (!info) return;
-            var waterInfo = getEffectiveWater(seg.bulk || 0);
+            var waterInfo = getSegmentWater(seg);
             var water = waterInfo.water;
             var previewWet = '--', previewDry = '--';
             if (seg.endH !== null && seg.endH !== '' && seg.freq > 0 && seg.height > 0 && seg.bulk > 0 && !isNaN(water)) {
@@ -1155,7 +1169,6 @@
                 '<span class="seg-machine-label">' + (seg.machine || getCurrentMachine()) + '</span>';
         }
 
-        // 长按菜单
         var longPressTimer = null, longPressTarget = null;
         function setupLongPress() {
             document.querySelectorAll('.time-segment').forEach(function(el) {
@@ -1228,7 +1241,6 @@
             }
         }
 
-        // 统计信息
         function updateSegStats() {
             var segs = getSegments();
             var totalTime = 0, totalWet = 0, totalDry = 0, valid = 0;
@@ -1237,7 +1249,7 @@
                 var diff = timeToHours(s.endH, s.endM || 0) - timeToHours(s.startH, s.startM);
                 if (diff < 0) diff += 24;
                 if (diff <= 0) return;
-                var waterInfo = getEffectiveWater(s.bulk || 0);
+                var waterInfo = getSegmentWater(s);
                 if (isNaN(waterInfo.water) || s.freq <= 0 || s.height <= 0 || s.bulk <= 0) return;
                 var res = calcThroughput(s.height, s.freq, s.bulk, waterInfo.water);
                 if (isNaN(res.wet)) return;
@@ -1255,7 +1267,6 @@
             document.getElementById('statDry').textContent = fmt(totalDry, 2) + 't';
         }
 
-        // 计算累计
         function calcSegments() {
             var errBox = document.getElementById('segmentError');
             var resultBox = document.getElementById('segmentResult');
@@ -1318,9 +1329,8 @@
                 if (eh === null || eh === '') { result.valid = false; result.error = '时段 ' + (i+1) + ' 结束时间未填写'; return result; }
                 if ((s.freq || 0) <= 0) { result.valid = false; result.error = '时段 ' + (i+1) + ' 频率必须>0'; return result; }
                 var h = s.height || 0, b = s.bulk || 0;
-                var waterInfo = getEffectiveWater(b);
+                var waterInfo = getSegmentWater(s);
                 var water = waterInfo.water, src = waterInfo.source;
-                if (s.moisture && s.moisture !== '') { var n = parseFloat(s.moisture); if (!isNaN(n)) { water = n/100; src = '自定义'; } }
                 if (h <= 0 || b <= 0 || isNaN(water)) { result.valid = false; result.error = '时段 ' + (i+1) + ' 参数无效'; return result; }
                 var diff = timeToHours(eh, em || 0) - timeToHours(sh, sm);
                 if (diff < 0) diff += 24;
@@ -1344,7 +1354,6 @@
             return result;
         }
 
-        // 保存到历史
         function isDuplicateRecord(record) {
             for (var i = 0; i < appData.history.length; i++) {
                 var r = appData.history[i];
@@ -1408,7 +1417,6 @@
             showSaveMsg(msg);
         }
 
-        // 历史管理
         function renderHistory() {
             var list = getFilteredHistory();
             var container = document.getElementById('historyList');
@@ -1555,7 +1563,6 @@
             XLSX.writeFile(wb, '重板下料数据_导出.xlsx');
         }
 
-        // 单次计算
         function calcSingle() {
             var h = parseFloat(document.getElementById('defHeight').value) || 0;
             var b = parseFloat(document.getElementById('defBulk').value) || 0;
@@ -1691,17 +1698,24 @@
 
             var overlay = document.createElement('div');
             overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:20px;';
+            var dataUrl = canvas.toDataURL('image/png');
             overlay.innerHTML = `
                 <div style="background:#fff;border-radius:16px;padding:20px;max-width:95%;max-height:90vh;overflow:auto;text-align:center;box-shadow:0 8px 30px rgba(0,0,0,0.3);">
                     <p style="font-size:14px;color:#1e293b;margin-bottom:10px;">👇 长按图片保存到相册</p>
-                    <img src="${canvas.toDataURL('image/png')}" style="max-width:100%;max-height:60vh;border-radius:8px;border:1px solid #e2e8f0;" />
+                    <img src="${dataUrl}" style="max-width:100%;max-height:60vh;border-radius:8px;border:1px solid #e2e8f0;" />
                     <div style="margin-top:12px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
-                        <button onclick="tryDownloadImage('${canvas.toDataURL('image/png')}','${filename}')" style="padding:6px 20px;background:#3b82f6;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer;">📥 下载图片</button>
+                        <button id="downloadImgBtn" style="padding:6px 20px;background:#3b82f6;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer;">📥 下载图片</button>
                         <button onclick="this.parentElement.parentElement.parentElement.remove()" style="padding:6px 20px;background:#e8edf4;color:#2c3e50;border:none;border-radius:6px;font-size:14px;cursor:pointer;">关闭</button>
                     </div>
                 </div>
             `;
             document.body.appendChild(overlay);
+            document.getElementById('downloadImgBtn').addEventListener('click', function() {
+                var a = document.createElement('a');
+                a.href = dataUrl;
+                a.download = filename;
+                a.click();
+            });
         }
 
         function copySegResultText() {
@@ -1733,7 +1747,6 @@
             setTimeout(function() { el.style.display = 'none'; }, 2500);
         }
 
-        // ========== 分享功能（进度条、分表） ==========
         function showProgress(text, percent) {
             var overlay = document.getElementById('progressOverlay');
             document.getElementById('progressText').textContent = text;
@@ -1797,46 +1810,60 @@
         }
 
         function buildShareMessage(record, type) {
-    var lines = [];
-    lines.push('# 📊 给矿量数据分享');
-    lines.push('**时间**：' + (record.datetime || new Date().toLocaleString('zh-CN', { hour12: false })));
-    lines.push('**班次**：' + (record.shift || '--'));
-    lines.push('**总时长**：' + fmt(record.totalHours, 2) + ' h');
-    lines.push('**湿矿总量**：' + fmt(record.totalWet, 2) + ' t');
-    lines.push('**干矿总量**：' + fmt(record.totalDry, 2) + ' t');
-    if (record.remark) lines.push('**备注**：' + record.remark);
+            var lines = [];
+            lines.push('# 📊 给矿量数据分享');
+            lines.push('**时间**：' + (record.datetime || new Date().toLocaleString('zh-CN', { hour12: false })));
+            lines.push('**班次**：' + (record.shift || '--'));
+            lines.push('**总时长**：' + fmt(record.totalHours, 2) + ' h');
+            lines.push('**湿矿总量**：' + fmt(record.totalWet, 2) + ' t');
+            lines.push('**干矿总量**：' + fmt(record.totalDry, 2) + ' t');
+            if (record.remark) lines.push('**备注**：' + record.remark);
 
-    if (record.segments && record.segments.length) {
-        // 按重板分组
-        var groups = {};
-        record.segments.forEach(function(seg) {
-            var m = seg.machine || record.machineId || '未指定';
-            if (!groups[m]) groups[m] = [];
-            groups[m].push(seg);
-        });
-
-        var machineNames = Object.keys(groups).sort();
-        var multiMachine = machineNames.length > 1;
-
-        if (multiMachine) {
-            lines.push('> **重板分组**');
+            if (record.segments && record.segments.length) {
+                var groups = {};
+                record.segments.forEach(function(seg) {
+                    var m = seg.machine || record.machineId || '未指定';
+                    if (!groups[m]) groups[m] = [];
+                    groups[m].push(seg);
+                });
+                var machineNames = Object.keys(groups).sort();
+                var multiMachine = machineNames.length > 1;
+                if (multiMachine) {
+                    lines.push('> **重板分组**');
+                }
+                machineNames.forEach(function(machine) {
+                    if (multiMachine) {
+                        lines.push('> **' + machine + '**');
+                    }
+                    groups[machine].forEach(function(seg, idx) {
+                        lines.push('> ' + (idx + 1) + '. ' + seg.start + '~' + seg.end + '  ' + seg.freq + 'Hz  ' +
+                            '湿' + fmt(seg.wet, 2) + 't 干' + fmt(seg.dry, 2) + 't');
+                    });
+                });
+            }
+            lines.push('---');
+            lines.push(type === 'current' ? '（本数据由**给矿量计算器**即时生成）' : '（来自历史记录）');
+            return lines.join('\n');
         }
 
-        machineNames.forEach(function(machine) {
-            if (multiMachine) {
-                lines.push('> **' + machine + '**');
-            }
-            groups[machine].forEach(function(seg, idx) {
-                lines.push('> ' + (idx + 1) + '. ' + seg.start + '~' + seg.end + '  ' + seg.freq + 'Hz  ' +
-                    '湿' + fmt(seg.wet, 2) + 't 干' + fmt(seg.dry, 2) + 't');
-            });
-        });
-    }
-
-    lines.push('---');
-    lines.push(type === 'current' ? '（本数据由**给矿量计算器**即时生成）' : '（来自历史记录）');
-    return lines.join('\n');
-}
+        function getCurrentRecord() {
+            var dataStr = document.getElementById('segmentResult').dataset.data;
+            if (!dataStr) return null;
+            var data = JSON.parse(dataStr);
+            if (!data.items || !data.items.length) return null;
+            return {
+                machineId: data.machineId || getCurrentMachine(),
+                shift: appData.shift === 'day' ? '白班' : '夜班',
+                totalHours: data.totalTime,
+                totalWet: data.totalWet,
+                totalDry: data.totalDry,
+                datetime: new Date().toLocaleString('zh-CN', { hour12: false }),
+                segments: data.items.map(function(it) {
+                    return { start: it.start, end: it.end, freq: it.freq, hours: it.hours, wet: it.wet, dry: it.dry, machine: it.machine };
+                }),
+                remark: ''
+            };
+        }
 
         function showConfirmDialog(title, sub, previewText, onConfirm) {
             var overlay = document.getElementById('confirmOverlay');
@@ -1874,47 +1901,47 @@
             };
             overlay.onclick = function(e) { if (e.target === overlay) cancelBtn.onclick(); };
         }
-function showConfirmWithPreview(title, sub, previewHtml, onConfirm, onCancel) {
-    var overlay = document.getElementById('confirmOverlay');
-    document.getElementById('confirmTitle').textContent = title;
-    document.getElementById('confirmSub').textContent = sub;
-    // 预览区放入 HTML
-    document.getElementById('confirmPreview').innerHTML = previewHtml;
-    document.getElementById('confirmStatus').textContent = '';
-    overlay.classList.add('show');
 
-    var sendBtn = document.getElementById('confirmSendBtn');
-    var cancelBtn = document.getElementById('confirmCancelBtn');
+        function showConfirmWithPreview(title, sub, previewHtml, onConfirm, onCancel) {
+            var overlay = document.getElementById('confirmOverlay');
+            document.getElementById('confirmTitle').textContent = title;
+            document.getElementById('confirmSub').textContent = sub;
+            document.getElementById('confirmPreview').innerHTML = previewHtml;
+            document.getElementById('confirmStatus').textContent = '';
+            overlay.classList.add('show');
 
-    sendBtn.onclick = function() {
-        sendBtn.disabled = true;
-        sendBtn.textContent = '⏳ 发送中...';
-        document.getElementById('confirmStatus').textContent = '⏳ 发送中...';
-        onConfirm(function() {
-            document.getElementById('confirmStatus').textContent = '✅ 发送成功！';
-            sendBtn.textContent = '✅ 已发送';
-            setTimeout(function() {
+            var sendBtn = document.getElementById('confirmSendBtn');
+            var cancelBtn = document.getElementById('confirmCancelBtn');
+
+            sendBtn.onclick = function() {
+                sendBtn.disabled = true;
+                sendBtn.textContent = '⏳ 发送中...';
+                document.getElementById('confirmStatus').textContent = '⏳ 发送中...';
+                onConfirm(function() {
+                    document.getElementById('confirmStatus').textContent = '✅ 发送成功！';
+                    sendBtn.textContent = '✅ 已发送';
+                    setTimeout(function() {
+                        overlay.classList.remove('show');
+                        sendBtn.disabled = false;
+                        sendBtn.textContent = '✅ 确认发送';
+                        document.getElementById('confirmPreview').innerHTML = '';
+                    }, 1500);
+                }, function(err) {
+                    document.getElementById('confirmStatus').textContent = '❌ 发送失败：' + err.message;
+                    sendBtn.textContent = '✅ 确认发送';
+                    sendBtn.disabled = false;
+                });
+            };
+            cancelBtn.onclick = function() {
                 overlay.classList.remove('show');
                 sendBtn.disabled = false;
                 sendBtn.textContent = '✅ 确认发送';
-                document.getElementById('confirmPreview').innerHTML = ''; // 清空
-            }, 1500);
-        }, function(err) {
-            document.getElementById('confirmStatus').textContent = '❌ 发送失败：' + err.message;
-            sendBtn.textContent = '✅ 确认发送';
-            sendBtn.disabled = false;
-        });
-    };
-    cancelBtn.onclick = function() {
-        overlay.classList.remove('show');
-        sendBtn.disabled = false;
-        sendBtn.textContent = '✅ 确认发送';
-        document.getElementById('confirmPreview').innerHTML = '';
-        if (onCancel) onCancel();
-    };
-    overlay.onclick = function(e) { if (e.target === overlay) cancelBtn.onclick(); };
-}
-        // 分享文本
+                document.getElementById('confirmPreview').innerHTML = '';
+                if (onCancel) onCancel();
+            };
+            overlay.onclick = function(e) { if (e.target === overlay) cancelBtn.onclick(); };
+        }
+
         function shareCurrentText() {
             var record = getCurrentRecord();
             if (!record) { alert('请先点击"计算累计"生成结果'); return; }
@@ -1943,268 +1970,256 @@ function showConfirmWithPreview(title, sub, previewHtml, onConfirm, onCancel) {
             });
         }
 
-        // 分享截图（带进度条）
-     function generateScreenshotData() {
-    return new Promise(function(resolve, reject) {
-        var dataStr = document.getElementById('segmentResult').dataset.data;
-        if (!dataStr) { reject(new Error('无数据，请先计算累计')); return; }
-        var data = JSON.parse(dataStr);
-        if (!data.items || !data.items.length) { reject(new Error('无有效数据')); return; }
+        function generateScreenshotData() {
+            return new Promise(function(resolve, reject) {
+                var dataStr = document.getElementById('segmentResult').dataset.data;
+                if (!dataStr) { reject(new Error('无数据，请先计算累计')); return; }
+                var data = JSON.parse(dataStr);
+                if (!data.items || !data.items.length) { reject(new Error('无有效数据')); return; }
 
-        var groups = {};
-        data.items.forEach(function(item) {
-            var m = item.machine || '未指定';
-            if (!groups[m]) groups[m] = [];
-            groups[m].push(item);
-        });
-        var html = '', tTime = 0, tWet = 0, tDry = 0;
-        Object.keys(groups).forEach(function(m) {
-            var items = groups[m], subT = 0, subW = 0, subD = 0;
-            html += '<div style="background:#dbeafe;padding:3px 8px;border-radius:4px;margin-top:4px;font-weight:600;border-left:3px solid #3b82f6;">📌 重板 ' + m + '</div>';
-            items.forEach(function(it, idx) {
-                subT += it.hours; subW += it.wet; subD += it.dry;
-                html += '<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;border-bottom:1px dashed #e2e8f0;"><span>时段' + (idx+1) + ' (' + it.start + '-' + it.end + ', ' + it.freq + 'Hz)</span><span>湿 ' + fmt(it.wet,2) + 't / 干 ' + fmt(it.dry,2) + 't</span></div>';
-            });
-            html += '<div style="background:#f1f5f9;padding:3px 8px;margin:2px 0 6px;">小计：' + fmt(subT,2) + 'h，湿 ' + fmt(subW,2) + 't，干 ' + fmt(subD,2) + 't</div>';
-            tTime += subT; tWet += subW; tDry += subD;
-        });
-        html += '<div style="background:#dbeafe;padding:5px 8px;border-radius:6px;margin-top:6px;font-weight:700;text-align:center;">📊 总计：时长 ' + fmt(tTime,2) + 'h，湿矿 ' + fmt(tWet,2) + 't，干矿 ' + fmt(tDry,2) + 't</div>';
+                var groups = {};
+                data.items.forEach(function(item) {
+                    var m = item.machine || '未指定';
+                    if (!groups[m]) groups[m] = [];
+                    groups[m].push(item);
+                });
+                var html = '', tTime = 0, tWet = 0, tDry = 0;
+                Object.keys(groups).forEach(function(m) {
+                    var items = groups[m], subT = 0, subW = 0, subD = 0;
+                    html += '<div style="background:#dbeafe;padding:3px 8px;border-radius:4px;margin-top:4px;font-weight:600;border-left:3px solid #3b82f6;">📌 重板 ' + m + '</div>';
+                    items.forEach(function(it, idx) {
+                        subT += it.hours; subW += it.wet; subD += it.dry;
+                        html += '<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;border-bottom:1px dashed #e2e8f0;"><span>时段' + (idx+1) + ' (' + it.start + '-' + it.end + ', ' + it.freq + 'Hz)</span><span>湿 ' + fmt(it.wet,2) + 't / 干 ' + fmt(it.dry,2) + 't</span></div>';
+                    });
+                    html += '<div style="background:#f1f5f9;padding:3px 8px;margin:2px 0 6px;">小计：' + fmt(subT,2) + 'h，湿 ' + fmt(subW,2) + 't，干 ' + fmt(subD,2) + 't</div>';
+                    tTime += subT; tWet += subW; tDry += subD;
+                });
+                html += '<div style="background:#dbeafe;padding:5px 8px;border-radius:6px;margin-top:6px;font-weight:700;text-align:center;">📊 总计：时长 ' + fmt(tTime,2) + 'h，湿矿 ' + fmt(tWet,2) + 't，干矿 ' + fmt(tDry,2) + 't</div>';
 
-        var container = document.createElement('div');
-        container.style.cssText = 'position:fixed;left:-9999px;width:440px;padding:24px;background:#fff;font-family:sans-serif;z-index:9999;border-radius:16px;';
-        container.innerHTML = '<div style="text-align:center;margin-bottom:14px;padding-bottom:12px;border-bottom:3px solid #3b82f6;"><div style="font-size:20px;font-weight:700;">📊 给矿量累计报表</div><div style="font-size:12px;color:#94a3b8;">' + new Date().toLocaleString('zh-CN', { hour12: false }) + '</div></div><div style="font-size:13px;color:#475569;line-height:1.7;">' + html + '</div><div style="margin-top:14px;padding-top:12px;border-top:2px solid #3b82f6;display:flex;justify-content:space-between;font-weight:700;font-size:15px;"><span>📊 总计</span><span>时长 ' + fmt(tTime,2) + ' ｜ 湿矿 ' + fmt(tWet,2) + ' ｜ 干矿 ' + fmt(tDry,2) + '</span></div><div style="text-align:center;font-size:10px;color:#94a3b8;margin-top:10px;">重板给料机 · 给矿量报表</div>';
-        document.body.appendChild(container);
+                var container = document.createElement('div');
+                container.style.cssText = 'position:fixed;left:-9999px;width:440px;padding:24px;background:#fff;font-family:sans-serif;z-index:9999;border-radius:16px;';
+                container.innerHTML = '<div style="text-align:center;margin-bottom:14px;padding-bottom:12px;border-bottom:3px solid #3b82f6;"><div style="font-size:20px;font-weight:700;">📊 给矿量累计报表</div><div style="font-size:12px;color:#94a3b8;">' + new Date().toLocaleString('zh-CN', { hour12: false }) + '</div></div><div style="font-size:13px;color:#475569;line-height:1.7;">' + html + '</div><div style="margin-top:14px;padding-top:12px;border-top:2px solid #3b82f6;display:flex;justify-content:space-between;font-weight:700;font-size:15px;"><span>📊 总计</span><span>时长 ' + fmt(tTime,2) + ' ｜ 湿矿 ' + fmt(tWet,2) + ' ｜ 干矿 ' + fmt(tDry,2) + '</span></div><div style="text-align:center;font-size:10px;color:#94a3b8;margin-top:10px;">重板给料机 · 给矿量报表</div>';
+                document.body.appendChild(container);
 
-        html2canvas(container, {
-            scale: 1.5,
-            useCORS: true,
-            backgroundColor: '#fff',
-            logging: false,
-            width: 440,
-        }).then(function(canvas) {
-            document.body.removeChild(container);
-            var dataUrl = canvas.toDataURL('image/png');
-            fetch(dataUrl)
-                .then(function(res) { return res.blob(); })
-                .then(function(blob) {
-                    if (!blob || blob.size === 0) {
-                        reject(new Error('生成图片失败，文件为空'));
-                    } else {
-                        resolve({ canvas: canvas, blob: blob, dataUrl: dataUrl });
-                    }
-                })
-                .catch(function(err) {
+                html2canvas(container, {
+                    scale: 1.5,
+                    useCORS: true,
+                    backgroundColor: '#fff',
+                    logging: false,
+                    width: 440,
+                }).then(function(canvas) {
+                    document.body.removeChild(container);
+                    var dataUrl = canvas.toDataURL('image/png');
+                    fetch(dataUrl)
+                        .then(function(res) { return res.blob(); })
+                        .then(function(blob) {
+                            if (!blob || blob.size === 0) {
+                                reject(new Error('生成图片失败，文件为空'));
+                            } else {
+                                resolve({ canvas: canvas, blob: blob, dataUrl: dataUrl });
+                            }
+                        })
+                        .catch(function(err) { reject(err); });
+                }).catch(function(err) {
+                    document.body.removeChild(container);
                     reject(err);
                 });
-        }).catch(function(err) {
-            document.body.removeChild(container);
-            reject(err);
-        });
-    });
-}
-
-function shareCurrentScreenshot() {
-    var record = getCurrentRecord();
-    if (!record) { alert('请先点击"计算累计"生成结果'); return; }
-    if (typeof html2canvas === 'undefined') { alert('截屏库未加载，请检查网络后重试'); return; }
-
-    showProgress('正在生成截图...', 0);
-    var progressInterval = setInterval(function() {
-        var current = parseInt(document.getElementById('progressFill').style.width) || 0;
-        if (current < 80) {
-            updateProgress('正在生成截图...', current + 5);
+            });
         }
-    }, 300);
 
-    generateScreenshotData().then(function(result) {
-        clearInterval(progressInterval);
-        updateProgress('生成完成', 100);
-        setTimeout(function() {
-            hideProgress();
-            var previewHtml = '<img src="' + result.dataUrl + '" style="max-width:100%; max-height:50vh; border-radius:8px; border:1px solid #e2e8f0;" />';
-            showConfirmWithPreview(
-                '🖼️ 确认发送截图',
-                '将使用 Base64 方式直接发送图片。',
-                previewHtml,
-                function(onSuccess, onError) {
-                    showProgress('正在处理图片...', 10);
-                    var reader = new FileReader();
-                    reader.onload = function(e) {
-                        try {
-                            var arrayBuffer = e.target.result;
-                            var bytes = new Uint8Array(arrayBuffer);
-                            var spark = new SparkMD5.ArrayBuffer();
-                            spark.append(arrayBuffer);
-                            var md5 = spark.end();
-                            var base64 = btoa(String.fromCharCode.apply(null, bytes));
+        function shareCurrentScreenshot() {
+            var record = getCurrentRecord();
+            if (!record) { alert('请先点击"计算累计"生成结果'); return; }
+            if (typeof html2canvas === 'undefined') { alert('截屏库未加载，请检查网络后重试'); return; }
 
-                            var payload = {
-                                msgtype: 'image',
-                                image: {
-                                    base64: base64,
-                                    md5: md5
+            showProgress('正在生成截图...', 0);
+            var progressInterval = setInterval(function() {
+                var current = parseInt(document.getElementById('progressFill').style.width) || 0;
+                if (current < 80) {
+                    updateProgress('正在生成截图...', current + 5);
+                }
+            }, 300);
+
+            generateScreenshotData().then(function(result) {
+                clearInterval(progressInterval);
+                updateProgress('生成完成', 100);
+                setTimeout(function() {
+                    hideProgress();
+                    var previewHtml = '<img src="' + result.dataUrl + '" style="max-width:100%; max-height:50vh; border-radius:8px; border:1px solid #e2e8f0;" />';
+                    showConfirmWithPreview(
+                        '🖼️ 确认发送截图',
+                        '将使用 Base64 方式直接发送图片。',
+                        previewHtml,
+                        function(onSuccess, onError) {
+                            showProgress('正在处理图片...', 10);
+                            var reader = new FileReader();
+                            reader.onload = function(e) {
+                                try {
+                                    var arrayBuffer = e.target.result;
+                                    var bytes = new Uint8Array(arrayBuffer);
+                                    var spark = new SparkMD5.ArrayBuffer();
+                                    spark.append(arrayBuffer);
+                                    var md5 = spark.end();
+                                    var base64 = btoa(String.fromCharCode.apply(null, bytes));
+
+                                    var payload = {
+                                        msgtype: 'image',
+                                        image: { base64: base64, md5: md5 }
+                                    };
+
+                                    updateProgress('正在发送图片...', 50);
+
+                                    fetch(WEBHOOK_URL, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify(payload)
+                                    })
+                                    .then(function(response) { return response.json(); })
+                                    .then(function(json) {
+                                        if (json.errcode === 0) {
+                                            updateProgress('发送成功！', 100);
+                                            setTimeout(function() {
+                                                hideProgress();
+                                                onSuccess();
+                                            }, 800);
+                                        } else {
+                                            throw new Error(json.errmsg || '发送失败');
+                                        }
+                                    })
+                                    .catch(function(err) {
+                                        hideProgress();
+                                        onError(err);
+                                    });
+                                } catch (err) {
+                                    hideProgress();
+                                    onError(err);
                                 }
                             };
+                            reader.onerror = function() {
+                                hideProgress();
+                                onError(new Error('读取图片数据失败'));
+                            };
+                            reader.readAsArrayBuffer(result.blob);
+                        },
+                        function() {}
+                    );
+                }, 300);
+            }).catch(function(err) {
+                clearInterval(progressInterval);
+                hideProgress();
+                alert('生成截图失败：' + err.message);
+            });
+        }
 
-                            updateProgress('正在发送图片...', 50);
+        function shareCurrentExcelWrapper() {
+            var record = getCurrentRecord();
+            if (!record) { alert('请先点击"计算累计"生成结果'); return; }
+            if (typeof XLSX === 'undefined') { alert('Excel库未加载，请检查网络后重试'); return; }
 
-                            fetch(WEBHOOK_URL, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(payload)
-                            })
-                            .then(function(response) { return response.json(); })
-                            .then(function(json) {
-                                if (json.errcode === 0) {
-                                    updateProgress('发送成功！', 100);
-                                    setTimeout(function() {
-                                        hideProgress();
-                                        onSuccess();
-                                    }, 800);
-                                } else {
-                                    throw new Error(json.errmsg || '发送失败');
-                                }
-                            })
-                            .catch(function(err) {
+            showProgress('正在生成 Excel 文件...', 0);
+            var progressInterval = setInterval(function() {
+                var current = parseInt(document.getElementById('progressFill').style.width) || 0;
+                if (current < 80) {
+                    updateProgress('正在生成 Excel 文件...', current + 5);
+                }
+            }, 300);
+
+            try {
+                var dataStr = document.getElementById('segmentResult').dataset.data;
+                var data = JSON.parse(dataStr);
+                var groups = {};
+                data.items.forEach(function(item) {
+                    var m = item.machine || '未指定';
+                    if (!groups[m]) groups[m] = [];
+                    groups[m].push(item);
+                });
+
+                var wb = XLSX.utils.book_new();
+                Object.keys(groups).forEach(function(machine) {
+                    var items = groups[machine];
+                    var rows = [];
+                    items.forEach(function(item, idx) {
+                        rows.push({
+                            '序号': idx + 1,
+                            '开始时间': item.start,
+                            '结束时间': item.end,
+                            '频率(Hz)': item.freq,
+                            '运行时长(h)': Number(item.hours.toFixed(2)),
+                            '湿矿量(t)': Number(item.wet.toFixed(2)),
+                            '干矿量(t)': Number(item.dry.toFixed(2))
+                        });
+                    });
+                    var subT = items.reduce(function(s, it) { return s + it.hours; }, 0);
+                    var subW = items.reduce(function(s, it) { return s + it.wet; }, 0);
+                    var subD = items.reduce(function(s, it) { return s + it.dry; }, 0);
+                    rows.push({
+                        '序号': '小计',
+                        '开始时间': '',
+                        '结束时间': '',
+                        '频率(Hz)': '',
+                        '运行时长(h)': Number(subT.toFixed(2)),
+                        '湿矿量(t)': Number(subW.toFixed(2)),
+                        '干矿量(t)': Number(subD.toFixed(2))
+                    });
+
+                    var ws = XLSX.utils.json_to_sheet(rows);
+                    XLSX.utils.book_append_sheet(wb, ws, machine.replace(/[\\\/\?\*\[\]\:]/g, '_'));
+                });
+
+                var wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'base64' });
+                var byteCharacters = atob(wbout);
+                var byteNumbers = new Array(byteCharacters.length);
+                for (var i = 0; i < byteCharacters.length; i++) {
+                    byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                var blob = new Blob([new Uint8Array(byteNumbers)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                var filename = '重板给矿量_' + new Date().toISOString().slice(0,10) + '.xlsx';
+
+                clearInterval(progressInterval);
+                updateProgress('生成完成', 100);
+                setTimeout(function() {
+                    hideProgress();
+                    var sheetNames = Object.keys(groups).join('、');
+                    var previewHtml = '<div style="text-align:left; font-size:13px; line-height:1.6;">' +
+                        '<p>📁 文件名：<strong>' + filename + '</strong></p>' +
+                        '<p>📊 包含工作表：' + sheetNames + '</p>' +
+                        '<p>📋 数据行数：' + data.items.length + ' 条</p>' +
+                        '</div>';
+                    showConfirmWithPreview(
+                        '📊 确认发送 Excel 文件',
+                        '文件将发送到企业微信群。',
+                        previewHtml,
+                        function(onSuccess, onError) {
+                            showProgress('正在上传 Excel...', 10);
+                            uploadMedia(blob, filename, 'file').then(function(mediaId) {
+                                updateProgress('正在发送文件...', 50);
+                                return sendFile(mediaId);
+                            }).then(function() {
+                                updateProgress('发送成功！', 100);
+                                setTimeout(hideProgress, 800);
+                                onSuccess();
+                                showToast('📊 Excel 已发送');
+                            }).catch(function(err) {
                                 hideProgress();
                                 onError(err);
+                                alert('发送失败：' + err.message);
                             });
-                        } catch (err) {
-                            hideProgress();
-                            onError(err);
                         }
-                    };
-                    reader.onerror = function() {
-                        hideProgress();
-                        onError(new Error('读取图片数据失败'));
-                    };
-                    reader.readAsArrayBuffer(result.blob);
-                },
-                function() {}
-            );
-        }, 300);
-    }).catch(function(err) {
-        clearInterval(progressInterval);
-        hideProgress();
-        alert('生成截图失败：' + err.message);
-    });
-}
-
-        // 分享 Excel（按重板分工作表）
-        function shareCurrentExcelWrapper() {
-    var record = getCurrentRecord();
-    if (!record) { alert('请先点击"计算累计"生成结果'); return; }
-    if (typeof XLSX === 'undefined') { alert('Excel库未加载，请检查网络后重试'); return; }
-
-    // 1. 显示生成进度
-    showProgress('正在生成 Excel 文件...', 0);
-    var progressInterval = setInterval(function() {
-        var current = parseInt(document.getElementById('progressFill').style.width) || 0;
-        if (current < 80) {
-            updateProgress('正在生成 Excel 文件...', current + 5);
+                    );
+                }, 300);
+            } catch (e) {
+                clearInterval(progressInterval);
+                hideProgress();
+                alert('生成 Excel 失败：' + e.message);
+            }
         }
-    }, 300);
 
-    try {
-        var dataStr = document.getElementById('segmentResult').dataset.data;
-        var data = JSON.parse(dataStr);
-        var groups = {};
-        data.items.forEach(function(item) {
-            var m = item.machine || '未指定';
-            if (!groups[m]) groups[m] = [];
-            groups[m].push(item);
-        });
-
-        var wb = XLSX.utils.book_new();
-        Object.keys(groups).forEach(function(machine) {
-            var items = groups[machine];
-            var rows = [];
-            items.forEach(function(item, idx) {
-                rows.push({
-                    '序号': idx + 1,
-                    '开始时间': item.start,
-                    '结束时间': item.end,
-                    '频率(Hz)': item.freq,
-                    '运行时长(h)': Number(item.hours.toFixed(2)),
-                    '湿矿量(t)': Number(item.wet.toFixed(2)),
-                    '干矿量(t)': Number(item.dry.toFixed(2))
-                });
-            });
-            var subT = items.reduce(function(s, it) { return s + it.hours; }, 0);
-            var subW = items.reduce(function(s, it) { return s + it.wet; }, 0);
-            var subD = items.reduce(function(s, it) { return s + it.dry; }, 0);
-            rows.push({
-                '序号': '小计',
-                '开始时间': '',
-                '结束时间': '',
-                '频率(Hz)': '',
-                '运行时长(h)': Number(subT.toFixed(2)),
-                '湿矿量(t)': Number(subW.toFixed(2)),
-                '干矿量(t)': Number(subD.toFixed(2))
-            });
-
-            var ws = XLSX.utils.json_to_sheet(rows);
-            XLSX.utils.book_append_sheet(wb, ws, machine.replace(/[\\\/\?\*\[\]\:]/g, '_'));
-        });
-
-        // 生成 blob
-        var wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'base64' });
-        var byteCharacters = atob(wbout);
-        var byteNumbers = new Array(byteCharacters.length);
-        for (var i = 0; i < byteCharacters.length; i++) {
-            byteNumbers[i] = byteCharacters.charCodeAt(i);
-        }
-        var blob = new Blob([new Uint8Array(byteNumbers)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-        var filename = '重板给矿量_' + new Date().toISOString().slice(0,10) + '.xlsx';
-
-        clearInterval(progressInterval);
-        updateProgress('生成完成', 100);
-        setTimeout(function() {
-            hideProgress();
-            // 显示文件信息预览
-            var sheetNames = Object.keys(groups).join('、');
-            var previewHtml = '<div style="text-align:left; font-size:13px; line-height:1.6;">' +
-                '<p>📁 文件名：<strong>' + filename + '</strong></p>' +
-                '<p>📊 包含工作表：' + sheetNames + '</p>' +
-                '<p>📋 数据行数：' + data.items.length + ' 条</p>' +
-                '</div>';
-            showConfirmWithPreview(
-                '📊 确认发送 Excel 文件',
-                '文件将发送到企业微信群。',
-                previewHtml,
-                function(onSuccess, onError) {
-                    showProgress('正在上传 Excel...', 10);
-                    uploadMedia(blob, filename, 'file').then(function(mediaId) {
-                        updateProgress('正在发送文件...', 50);
-                        return sendFile(mediaId);
-                    }).then(function() {
-                        updateProgress('发送成功！', 100);
-                        setTimeout(hideProgress, 800);
-                        onSuccess();
-                        showToast('📊 Excel 已发送');
-                    }).catch(function(err) {
-                        hideProgress();
-                        onError(err);
-                        alert('发送失败：' + err.message);
-                    });
-                }
-            );
-        }, 300);
-    } catch (e) {
-        clearInterval(progressInterval);
-        hideProgress();
-        alert('生成 Excel 失败：' + e.message);
-    }
-}
-
-        // 帮助弹窗
         function initHelp() {
             document.getElementById('helpBtn').addEventListener('click', function() { document.getElementById('helpOverlay').classList.add('show'); });
             document.getElementById('helpClose').addEventListener('click', function() { document.getElementById('helpOverlay').classList.remove('show'); });
             document.getElementById('helpOverlay').addEventListener('click', function(e) { if (e.target === this) this.classList.remove('show'); });
         }
 
-        // ========== 初始化 ==========
         function init() {
             loadMachineParams(getCurrentMachine());
             initShift();
@@ -2215,18 +2230,15 @@ function shareCurrentScreenshot() {
             renderHistory();
             initHelp();
 
-            // 提醒弹窗
             document.getElementById('reminderOverlay').style.display = 'flex';
             document.getElementById('closeReminder').addEventListener('click', function() {
                 document.getElementById('reminderOverlay').style.display = 'none';
             });
 
-            // 对照表折叠
             document.getElementById('lookupBody').classList.remove('open');
             document.getElementById('lookupArrow').classList.remove('open');
             document.getElementById('lookupBadge').textContent = '点击展开';
 
-            // 事件绑定
             document.querySelectorAll('.machine-bar .mbtn').forEach(function(btn) {
                 btn.addEventListener('click', function() {
                     document.querySelectorAll('.machine-bar .mbtn').forEach(function(b) { b.classList.remove('active'); });
@@ -2294,7 +2306,6 @@ function shareCurrentScreenshot() {
             document.getElementById('screenshotSegResultBtn').addEventListener('click', screenshotResult);
             document.getElementById('copySegResultBtn').addEventListener('click', copySegResultText);
 
-            // 分享按钮
             document.getElementById('shareSegResultBtn').addEventListener('click', shareCurrentText);
             document.getElementById('shareScreenshotBtn').addEventListener('click', shareCurrentScreenshot);
             document.getElementById('shareExcelBtn').addEventListener('click', shareCurrentExcelWrapper);
