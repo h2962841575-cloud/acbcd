@@ -26,10 +26,12 @@ async function generateSignature(message, secret) {
 async function verifyRequest(request, secret, contentType) {
   const ts = request.headers.get('X-Timestamp');
   const signature = request.headers.get('X-Signature');
-  if (!ts || !signature) return false;
+  if (!ts || !signature) return { valid: false, reason: 'Missing X-Timestamp or X-Signature' };
 
   const now = Math.floor(Date.now() / 1000);
-  if (Math.abs(now - parseInt(ts)) > MAX_TIME_DIFF) return false;
+  if (Math.abs(now - parseInt(ts)) > MAX_TIME_DIFF) {
+    return { valid: false, reason: `Timestamp too old. Server time: ${now}, client: ${ts}` };
+  }
 
   let message = ts + ':';
   if (contentType && contentType.includes('multipart/form-data')) {
@@ -42,11 +44,15 @@ async function verifyRequest(request, secret, contentType) {
   }
 
   const expectedSig = await generateSignature(message, secret);
-  return signature === expectedSig;
+  if (signature !== expectedSig) {
+    return { valid: false, reason: 'Signature mismatch' };
+  }
+
+  return { valid: true };
 }
 
 export default {
-  async fetch(request, env) {  // env 对象包含环境变量
+  async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -55,12 +61,57 @@ export default {
     }
 
     const contentType = request.headers.get('Content-Type') || '';
-    const secret = env.SHARED_SECRET;  // 从环境变量读取密钥
+    // 从环境变量读取密钥，如果没有则使用硬编码的 fallback（方便调试）
+    const secret = (env && env.SHARED_SECRET) || 'My$ecr3tK3y!2024';
 
-    if (!await verifyRequest(request, secret, contentType)) {
-      return new Response('Unauthorized', { status: 401, headers: CORS_HEADERS });
+    const verification = await verifyRequest(request, secret, contentType);
+    if (!verification.valid) {
+      // 返回 401 并附带调试信息，同时加上 CORS 头
+      const responseHeaders = { ...CORS_HEADERS, 'Content-Type': 'text/plain' };
+      return new Response(`401 Unauthorized: ${verification.reason}`, {
+        status: 401,
+        headers: responseHeaders
+      });
     }
 
-    // ... 后面的 send 和 upload 逻辑保持不变
+    // ---- 以下为原有转发逻辑，保持不变 ----
+    if (path === '/send') {
+      const resp = await fetch(SEND_URL, {
+        method: 'POST',
+        headers: request.headers,
+        body: request.body
+      });
+      const data = await resp.text();
+      return new Response(data, {
+        status: resp.status,
+        headers: { ...Object.fromEntries(resp.headers), ...CORS_HEADERS }
+      });
+    }
+
+    if (path === '/upload') {
+      const type = url.searchParams.get('type') || 'file';
+      const uploadUrl = UPLOAD_BASE + '&type=' + encodeURIComponent(type);
+
+      const bodyBuffer = await request.arrayBuffer();
+      const newHeaders = new Headers(request.headers);
+      newHeaders.set('Content-Length', bodyBuffer.byteLength);
+      newHeaders.delete('host');
+      newHeaders.delete('connection');
+
+      const newRequest = new Request(uploadUrl, {
+        method: 'POST',
+        headers: newHeaders,
+        body: bodyBuffer
+      });
+
+      const resp = await fetch(newRequest);
+      const data = await resp.text();
+      return new Response(data, {
+        status: resp.status,
+        headers: { ...Object.fromEntries(resp.headers), ...CORS_HEADERS }
+      });
+    }
+
+    return new Response('Not found', { status: 404 });
   }
 };
