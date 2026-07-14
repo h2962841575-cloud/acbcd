@@ -2016,35 +2016,48 @@ function showConfirmWithPreview(title, sub, previewHtml, onConfirm, onCancel) {
         }
     }, 300);
 
-    // 【关键修复】使用正确的函数名 generateScreenshotData
     generateScreenshotData().then(function(result) {
         clearInterval(progressInterval);
         updateProgress('生成完成', 100);
         setTimeout(function() {
             hideProgress();
+            // 显示预览弹窗
             var previewHtml = '<img src="' + result.dataUrl + '" style="max-width:100%; max-height:50vh; border-radius:8px; border:1px solid #e2e8f0;" />';
             showConfirmWithPreview(
                 '🖼️ 确认发送截图',
-                '以下是将发送到企业微信群的截图，请确认。',
+                '将使用 Base64 方式直接发送图片。',
                 previewHtml,
                 function(onSuccess, onError) {
-                    showProgress('正在上传截图...', 10);
-                    uploadMedia(result.blob, '重板下料截图.png', 'image')
-                        .then(function(mediaId) {
-                            updateProgress('正在发送图片...', 50);
-                            return sendImage(mediaId);
-                        })
-                        .then(function() {
-                            updateProgress('发送成功！', 100);
-                            setTimeout(hideProgress, 800);
-                            onSuccess();
-                            showToast('🖼️ 截图已发送');
-                        })
-                        .catch(function(err) {
-                            hideProgress();
-                            onError(err);
-                            alert('发送失败：' + err.message);
-                        });
+                    showProgress('正在处理图片...', 10);
+                    // 从 dataUrl 中提取纯 Base64 字符串（去掉前缀）
+                    var base64 = result.dataUrl.split(',')[1];
+                    // 构建企业微信图片消息（无需 md5）
+                    var payload = {
+                        msgtype: 'image',
+                        image: {
+                            base64: base64
+                            // md5 字段为可选，如果不提供，企业微信会自动计算
+                        }
+                    };
+                    updateProgress('正在发送图片...', 50);
+                    fetch(WEBHOOK_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    })
+                    .then(function(resp) { return resp.json(); })
+                    .then(function(json) {
+                        if (json.errcode !== 0) throw new Error(json.errmsg || '发送失败');
+                        updateProgress('发送成功！', 100);
+                        setTimeout(hideProgress, 800);
+                        onSuccess();
+                        showToast('🖼️ 截图已发送');
+                    })
+                    .catch(function(err) {
+                        hideProgress();
+                        onError(err);
+                        alert('发送失败：' + err.message);
+                    });
                 },
                 function() {}
             );
