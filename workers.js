@@ -17,7 +17,7 @@ export default {
       return new Response(null, { headers: CORS_HEADERS });
     }
 
-    // 发送文本消息
+    // 发送消息（JSON）
     if (path === '/send') {
       const resp = await fetch(SEND_URL, {
         method: 'POST',
@@ -31,23 +31,29 @@ export default {
       });
     }
 
-    // 上传文件（图片、Excel 等）
+    // 上传文件（图片、Excel 等）—— 关键修改部分
     if (path === '/upload') {
       const type = url.searchParams.get('type') || 'file';
       const uploadUrl = UPLOAD_BASE + '&type=' + encodeURIComponent(type);
 
-      // 复制原始请求头，保留正确的 Content-Type（含 boundary）
+      // ① 完整读取请求体（二进制）
+      const bodyBuffer = await request.arrayBuffer();
+
+      // ② 复制请求头，并强制添加 Content-Length
       const newHeaders = new Headers(request.headers);
-      // 删除可能冲突的头
+      newHeaders.set('Content-Length', bodyBuffer.byteLength);
+      // 删除可能干扰的头部
       newHeaders.delete('host');
       newHeaders.delete('connection');
 
+      // ③ 构造新请求
       const newRequest = new Request(uploadUrl, {
         method: 'POST',
         headers: newHeaders,
-        body: request.body
+        body: bodyBuffer
       });
 
+      // ④ 发送并返回企业微信响应
       const resp = await fetch(newRequest);
       const data = await resp.text();
       return new Response(data, {
