@@ -599,8 +599,51 @@
         var WIDTH = 1.73, TRUE_DENSITY = 3.42, CONST_TERM = 760653 / 772512500;
         var STORE_KEY = 'feederAppData';
         var WORKER_BASE = 'https://webhook-proxy.h2962841575.workers.dev';
-        var WEBHOOK_URL = WORKER_BASE + '/send';
-        var UPLOAD_URL = WORKER_BASE + '/upload';
+var WEBHOOK_URL = WORKER_BASE + '/send';
+var UPLOAD_URL = WORKER_BASE + '/upload';
+var SHARED_SECRET = 'My$ecr3tK3y!2024'; // 必须与 Worker 中的完全一致！
+
+// ---------- 新增签名与请求函数 ----------
+async function generateSignature(message) {
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+        'raw',
+        encoder.encode(SHARED_SECRET),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign']
+    );
+    const sigBuffer = await crypto.subtle.sign('HMAC', key, encoder.encode(message));
+    return btoa(String.fromCharCode(...new Uint8Array(sigBuffer)));
+}
+
+async function signedFetch(url, options) {
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const newOptions = { ...options };
+    const contentType = (newOptions.headers && newOptions.headers['Content-Type']) || '';
+
+    let message = ts + ':';
+    if (contentType.includes('multipart/form-data')) {
+        // 上传文件：消息 = 时间戳 + 文件大小
+        const body = newOptions.body;
+        const fileSize = (body instanceof FormData && body.get('media')) ? body.get('media').size : 0;
+        message += fileSize.toString();
+        newOptions.headers = newOptions.headers || {};
+        newOptions.headers['X-File-Size'] = fileSize.toString();
+    } else {
+        // 普通请求：消息 = 时间戳 + 请求体
+        const bodyText = newOptions.body || '';
+        message += bodyText;
+    }
+
+    const signature = await generateSignature(message);
+    newOptions.headers = newOptions.headers || {};
+    newOptions.headers['X-Timestamp'] = ts;
+    newOptions.headers['X-Signature'] = signature;
+
+    return fetch(url, newOptions);
+}
+// ---------- 新增结束 ----------
 
         var saveTimer = null;
         function saveData() {
@@ -1764,50 +1807,50 @@
         }
 
         function uploadMedia(blob, filename, type) {
-            if (!blob || blob.size === 0) return Promise.reject(new Error('文件数据为空'));
-            var url = UPLOAD_URL + '?type=' + encodeURIComponent(type);
-            var formData = new FormData();
-            formData.append('media', blob, filename);
-            return fetch(url, { method: 'POST', body: formData })
-                .then(function(resp) {
-                    if (!resp.ok) return resp.text().then(function(t) { throw new Error('上传失败: ' + t); });
-                    return resp.json();
-                })
-                .then(function(json) {
-                    if (json.errcode !== 0) throw new Error(json.errmsg || '上传失败');
-                    return json.media_id;
-                });
-        }
+    if (!blob || blob.size === 0) return Promise.reject(new Error('文件数据为空'));
+    var url = UPLOAD_URL + '?type=' + encodeURIComponent(type);
+    var formData = new FormData();
+    formData.append('media', blob, filename);
+    return signedFetch(url, { method: 'POST', body: formData })
+        .then(function(resp) {
+            if (!resp.ok) return resp.text().then(function(t) { throw new Error('上传失败: ' + t); });
+            return resp.json();
+        })
+        .then(function(json) {
+            if (json.errcode !== 0) throw new Error(json.errmsg || '上传失败');
+            return json.media_id;
+        });
+}
 
         function sendMarkdown(content) {
-            var payload = { msgtype: 'markdown', markdown: { content: content } };
-            return fetch(WEBHOOK_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            }).then(function(r) { return r.json(); })
-              .then(function(j) { if (j.errcode !== 0) throw new Error(j.errmsg); return j; });
-        }
+    var payload = { msgtype: 'markdown', markdown: { content: content } };
+    return signedFetch(WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    }).then(function(r) { return r.json(); })
+      .then(function(j) { if (j.errcode !== 0) throw new Error(j.errmsg); return j; });
+}
 
         function sendImage(mediaId) {
-            var payload = { msgtype: 'image', image: { media_id: mediaId } };
-            return fetch(WEBHOOK_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            }).then(function(r) { return r.json(); })
-              .then(function(j) { if (j.errcode !== 0) throw new Error(j.errmsg); return j; });
-        }
+    var payload = { msgtype: 'image', image: { media_id: mediaId } };
+    return signedFetch(WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    }).then(function(r) { return r.json(); })
+      .then(function(j) { if (j.errcode !== 0) throw new Error(j.errmsg); return j; });
+}
 
         function sendFile(mediaId) {
-            var payload = { msgtype: 'file', file: { media_id: mediaId } };
-            return fetch(WEBHOOK_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            }).then(function(r) { return r.json(); })
-              .then(function(j) { if (j.errcode !== 0) throw new Error(j.errmsg); return j; });
-        }
+    var payload = { msgtype: 'file', file: { media_id: mediaId } };
+    return signedFetch(WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    }).then(function(r) { return r.json(); })
+      .then(function(j) { if (j.errcode !== 0) throw new Error(j.errmsg); return j; });
+}
 
         function buildShareMessage(record, type) {
             var lines = [];
@@ -2069,11 +2112,11 @@
 
                                     updateProgress('正在发送图片...', 50);
 
-                                    fetch(WEBHOOK_URL, {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify(payload)
-                                    })
+                                    signedFetch(WEBHOOK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+})
                                     .then(function(response) { return response.json(); })
                                     .then(function(json) {
                                         if (json.errcode === 0) {
