@@ -1797,45 +1797,46 @@
         }
 
         function buildShareMessage(record, type) {
-            var lines = [];
-            lines.push('# 📊 给矿量数据分享');
-            lines.push('**时间**：' + (record.datetime || new Date().toLocaleString('zh-CN', { hour12: false })));
-            lines.push('**重板**：' + (record.machineId || '--'));
-            lines.push('**班次**：' + (record.shift || '--'));
-            lines.push('**总时长**：' + fmt(record.totalHours, 2) + ' h');
-            lines.push('**湿矿总量**：' + fmt(record.totalWet, 2) + ' t');
-            lines.push('**干矿总量**：' + fmt(record.totalDry, 2) + ' t');
-            if (record.remark) lines.push('**备注**：' + record.remark);
-            if (record.segments && record.segments.length) {
-                lines.push('> **分段明细**');
-                record.segments.forEach(function(seg, idx) {
-                    lines.push('> ' + (idx+1) + '. ' + seg.start + '~' + seg.end + '  ' + seg.freq + 'Hz  ' +
-                        '湿' + fmt(seg.wet,2) + 't 干' + fmt(seg.dry,2) + 't');
-                });
-            }
-            lines.push('---');
-            lines.push(type === 'current' ? '（本数据由**给矿量计算器**即时生成）' : '（来自历史记录）');
-            return lines.join('\n');
+    var lines = [];
+    lines.push('# 📊 给矿量数据分享');
+    lines.push('**时间**：' + (record.datetime || new Date().toLocaleString('zh-CN', { hour12: false })));
+    lines.push('**班次**：' + (record.shift || '--'));
+    lines.push('**总时长**：' + fmt(record.totalHours, 2) + ' h');
+    lines.push('**湿矿总量**：' + fmt(record.totalWet, 2) + ' t');
+    lines.push('**干矿总量**：' + fmt(record.totalDry, 2) + ' t');
+    if (record.remark) lines.push('**备注**：' + record.remark);
+
+    if (record.segments && record.segments.length) {
+        // 按重板分组
+        var groups = {};
+        record.segments.forEach(function(seg) {
+            var m = seg.machine || record.machineId || '未指定';
+            if (!groups[m]) groups[m] = [];
+            groups[m].push(seg);
+        });
+
+        var machineNames = Object.keys(groups).sort();
+        var multiMachine = machineNames.length > 1;
+
+        if (multiMachine) {
+            lines.push('> **重板分组**');
         }
 
-        function getCurrentRecord() {
-            var dataStr = document.getElementById('segmentResult').dataset.data;
-            if (!dataStr) return null;
-            var data = JSON.parse(dataStr);
-            if (!data.items || !data.items.length) return null;
-            return {
-                machineId: data.machineId || getCurrentMachine(),
-                shift: appData.shift === 'day' ? '白班' : '夜班',
-                totalHours: data.totalTime,
-                totalWet: data.totalWet,
-                totalDry: data.totalDry,
-                datetime: new Date().toLocaleString('zh-CN', { hour12: false }),
-                segments: data.items.map(function(it) {
-                    return { start: it.start, end: it.end, freq: it.freq, hours: it.hours, wet: it.wet, dry: it.dry };
-                }),
-                remark: ''
-            };
-        }
+        machineNames.forEach(function(machine) {
+            if (multiMachine) {
+                lines.push('> **' + machine + '**');
+            }
+            groups[machine].forEach(function(seg, idx) {
+                lines.push('> ' + (idx + 1) + '. ' + seg.start + '~' + seg.end + '  ' + seg.freq + 'Hz  ' +
+                    '湿' + fmt(seg.wet, 2) + 't 干' + fmt(seg.dry, 2) + 't');
+            });
+        });
+    }
+
+    lines.push('---');
+    lines.push(type === 'current' ? '（本数据由**给矿量计算器**即时生成）' : '（来自历史记录）');
+    return lines.join('\n');
+}
 
         function showConfirmDialog(title, sub, previewText, onConfirm) {
             var overlay = document.getElementById('confirmOverlay');
