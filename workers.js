@@ -17,7 +17,7 @@ export default {
       return new Response(null, { headers: CORS_HEADERS });
     }
 
-    // 发送消息（JSON）
+    // 发送消息（JSON，保持不变）
     if (path === '/send') {
       const resp = await fetch(SEND_URL, {
         method: 'POST',
@@ -31,31 +31,36 @@ export default {
       });
     }
 
-    // 上传文件（图片、Excel 等）—— 关键修改部分
+    // 上传文件 —— 关键修复
     if (path === '/upload') {
       const type = url.searchParams.get('type') || 'file';
       const uploadUrl = UPLOAD_BASE + '&type=' + encodeURIComponent(type);
 
-      // ① 完整读取请求体（二进制）
+      // 1. 完整读取请求体（二进制）
       const bodyBuffer = await request.arrayBuffer();
 
-      // ② 复制请求头，并强制添加 Content-Length
+      // 2. 复制请求头，并强制添加 Content-Length
       const newHeaders = new Headers(request.headers);
       newHeaders.set('Content-Length', bodyBuffer.byteLength);
       // 删除可能干扰的头部
       newHeaders.delete('host');
       newHeaders.delete('connection');
+      // 注意：绝对不能删除 Content-Type，它包含了 boundary！
 
-      // ③ 构造新请求
+      // 3. 构造新请求
       const newRequest = new Request(uploadUrl, {
         method: 'POST',
         headers: newHeaders,
         body: bodyBuffer
       });
 
-      // ④ 发送并返回企业微信响应
+      // 4. 发送并返回企业微信响应
       const resp = await fetch(newRequest);
       const data = await resp.text();
+      
+      // 5. （可选）添加日志，便于调试
+      console.log('Upload response:', data);
+      
       return new Response(data, {
         status: resp.status,
         headers: { ...Object.fromEntries(resp.headers), ...CORS_HEADERS }
