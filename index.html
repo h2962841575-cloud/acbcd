@@ -2029,35 +2029,63 @@ function showConfirmWithPreview(title, sub, previewHtml, onConfirm, onCancel) {
                 previewHtml,
                 function(onSuccess, onError) {
                     showProgress('正在处理图片...', 10);
-                    // 从 dataUrl 中提取纯 Base64 字符串（去掉前缀）
+                    // 1. 从 dataUrl 中提取纯 Base64 字符串
                     var base64 = result.dataUrl.split(',')[1];
-                    // 构建企业微信图片消息（无需 md5）
-                    var payload = {
-                        msgtype: 'image',
-                        image: {
-                            base64: base64
-                            // md5 字段为可选，如果不提供，企业微信会自动计算
+                    
+                    // 2. 【关键修复】使用 FileReader 读取 Blob 的二进制数据来计算 MD5
+                    var reader = new FileReader();
+                    reader.onload = function(e) {
+                        try {
+                            // e.target.result 是一个 ArrayBuffer
+                            var arrayBuffer = e.target.result;
+                            
+                            // 3. 使用 SubtleCrypto API 计算 MD5
+                            crypto.subtle.digest('MD5', arrayBuffer).then(function(hashBuffer) {
+                                // 4. 将 MD5 结果转换为 32 位十六进制字符串
+                                var hashArray = Array.from(new Uint8Array(hashBuffer));
+                                var md5 = hashArray.map(function(b) {
+                                    return b.toString(16).padStart(2, '0');
+                                }).join('');
+                                
+                                // 5. 构建包含 base64 和 md5 的 payload
+                                var payload = {
+                                    msgtype: 'image',
+                                    image: {
+                                        base64: base64,
+                                        md5: md5  // 现在 MD5 是正确的了
+                                    }
+                                };
+                                
+                                updateProgress('正在发送图片...', 50);
+                                return fetch(WEBHOOK_URL, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(payload)
+                                });
+                            }).then(function(resp) { return resp.json(); })
+                              .then(function(json) {
+                                  if (json.errcode !== 0) throw new Error(json.errmsg || '发送失败');
+                                  updateProgress('发送成功！', 100);
+                                  setTimeout(hideProgress, 800);
+                                  onSuccess();
+                                  showToast('🖼️ 截图已发送');
+                              }).catch(function(err) {
+                                  hideProgress();
+                                  onError(err);
+                                  alert('发送失败：' + err.message);
+                              });
+                        } catch (err) {
+                            hideProgress();
+                            onError(err);
+                            alert('处理图片数据失败：' + err.message);
                         }
                     };
-                    updateProgress('正在发送图片...', 50);
-                    fetch(WEBHOOK_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    })
-                    .then(function(resp) { return resp.json(); })
-                    .then(function(json) {
-                        if (json.errcode !== 0) throw new Error(json.errmsg || '发送失败');
-                        updateProgress('发送成功！', 100);
-                        setTimeout(hideProgress, 800);
-                        onSuccess();
-                        showToast('🖼️ 截图已发送');
-                    })
-                    .catch(function(err) {
+                    reader.onerror = function() {
                         hideProgress();
-                        onError(err);
-                        alert('发送失败：' + err.message);
-                    });
+                        onError(new Error('读取图片数据失败'));
+                    };
+                    // 读取 result.blob 的内容
+                    reader.readAsArrayBuffer(result.blob);
                 },
                 function() {}
             );
