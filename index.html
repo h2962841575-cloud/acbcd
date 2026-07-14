@@ -2017,37 +2017,50 @@ function showConfirmWithPreview(title, sub, previewHtml, onConfirm, onCancel) {
         }
     }, 300);
 
-    generateScreenshotBlob().then(function(result) {
+  function shareCurrentScreenshot() {
+    var record = getCurrentRecord();
+    if (!record) { alert('请先点击"计算累计"生成结果'); return; }
+    if (typeof html2canvas === 'undefined') { alert('截屏库未加载，请检查网络后重试'); return; }
+
+    showProgress('正在生成截图...', 0);
+    var progressInterval = setInterval(function() {
+        var current = parseInt(document.getElementById('progressFill').style.width) || 0;
+        if (current < 80) {
+            updateProgress('正在生成截图...', current + 5);
+        }
+    }, 300);
+
+    // 修正：使用正确的函数名 generateScreenshotData
+    generateScreenshotData().then(function(result) {
         clearInterval(progressInterval);
         updateProgress('生成完成', 100);
         setTimeout(function() {
             hideProgress();
-            // 2. 显示预览弹窗
             var previewHtml = '<img src="' + result.dataUrl + '" style="max-width:100%; max-height:50vh; border-radius:8px; border:1px solid #e2e8f0;" />';
             showConfirmWithPreview(
                 '🖼️ 确认发送截图',
                 '以下是将发送到企业微信群的截图，请确认。',
                 previewHtml,
                 function(onSuccess, onError) {
-                    // 点击确认发送：上传并发送
                     showProgress('正在上传截图...', 10);
-                    uploadMedia(result.blob, '重板下料截图.png', 'image').then(function(mediaId) {
-                        updateProgress('正在发送图片...', 50);
-                        return sendImage(mediaId);
-                    }).then(function() {
-                        updateProgress('发送成功！', 100);
-                        setTimeout(hideProgress, 800);
-                        onSuccess();
-                        showToast('🖼️ 截图已发送');
-                    }).catch(function(err) {
-                        hideProgress();
-                        onError(err);
-                        alert('发送失败：' + err.message);
-                    });
+                    uploadMedia(result.blob, '重板下料截图.png', 'image')
+                        .then(function(mediaId) {
+                            updateProgress('正在发送图片...', 50);
+                            return sendImage(mediaId);
+                        })
+                        .then(function() {
+                            updateProgress('发送成功！', 100);
+                            setTimeout(hideProgress, 800);
+                            onSuccess();
+                            showToast('🖼️ 截图已发送');
+                        })
+                        .catch(function(err) {
+                            hideProgress();
+                            onError(err);
+                            alert('发送失败：' + err.message);
+                        });
                 },
-                function() {
-                    // 取消：回收 blob 内存（浏览器自动）
-                }
+                function() {}
             );
         }, 300);
     }).catch(function(err) {
