@@ -1664,30 +1664,58 @@ async function signedFetch(url, options) {
         }
 
         function calcInverse() {
-            var h = parseFloat(document.getElementById('defHeight').value) || 0;
-            var b = parseFloat(document.getElementById('defBulk').value) || 0;
-            var sh = parseInt(document.getElementById('invStartH').value) || 0, sm = parseInt(document.getElementById('invStartM').value) || 0;
-            var eh = parseInt(document.getElementById('invEndH').value) || 0, em = parseInt(document.getElementById('invEndM').value) || 0;
-            var td = parseFloat(document.getElementById('targetDry').value) || 0;
-            var err = document.getElementById('inverseError'), resBox = document.getElementById('inverseResult'), suc = document.getElementById('inverseSuccess');
-            err.textContent = ''; suc.textContent = ''; resBox.style.display = 'none';
-            var hours = (eh + em/60) - (sh + sm/60);
-            if (hours < 0) hours += 24;
-            if (hours <= 0) { err.textContent = '结束时间须晚于开始'; return; }
-            if (td <= 0) { err.textContent = '目标干矿量>0'; return; }
-            var w = getEffectiveWater(b);
-            if (isNaN(w.water)) { err.textContent = '含水率无效'; return; }
-            var freq = inverseFreq(h, b, hours, td, w.water).freq;
-            if (isNaN(freq)) { err.textContent = '反推失败'; return; }
-            suc.textContent = freq < 0 || freq > 50 ? '⚠️ 频率 ' + freq.toFixed(2) + ' Hz 超出常规' : '✅ 建议频率 ' + freq.toFixed(2) + ' Hz';
-            var wet = WIDTH * h * (0.002 * freq - CONST_TERM) * b * 3600;
-            document.getElementById('invFreq').textContent = freq.toFixed(2) + ' Hz';
-            document.getElementById('invHours').textContent = hours.toFixed(2) + ' h';
-            document.getElementById('invDryRate').textContent = fmt(wet * (1 - w.water), 2) + ' t/h';
-            document.getElementById('invWetRate').textContent = fmt(wet, 2) + ' t/h';
-            resBox.style.display = 'block';
-        }
+    var h = parseFloat(document.getElementById('defHeight').value) || 0;
+    var b = parseFloat(document.getElementById('defBulk').value) || 0;
+    var sh = parseInt(document.getElementById('invStartH').value) || 0, sm = parseInt(document.getElementById('invStartM').value) || 0;
+    var eh = parseInt(document.getElementById('invEndH').value) || 0, em = parseInt(document.getElementById('invEndM').value) || 0;
+    var td = parseFloat(document.getElementById('targetDry').value) || 0;
+    var resBox = document.getElementById('inverseResult');
+    var suc = document.getElementById('inverseSuccess');
 
+    suc.textContent = '';
+    resBox.style.display = 'none';
+
+    var hours = (eh + em / 60) - (sh + sm / 60);
+    if (hours < 0) hours += 24;
+    if (hours <= 0) {
+        suc.textContent = '❌ 结束时间须晚于开始';
+        suc.style.color = '#dc2626';
+        resBox.style.display = 'block';
+        return;
+    }
+    if (td <= 0) {
+        suc.textContent = '❌ 目标干矿量必须大于 0';
+        suc.style.color = '#dc2626';
+        resBox.style.display = 'block';
+        return;
+    }
+    var w = getEffectiveWater(b);
+    if (isNaN(w.water)) {
+        suc.textContent = '❌ 含水率无效，请检查堆密度或输入含水率';
+        suc.style.color = '#dc2626';
+        resBox.style.display = 'block';
+        return;
+    }
+    var freq = inverseFreq(h, b, hours, td, w.water).freq;
+    if (isNaN(freq)) {
+        suc.textContent = '❌ 反推失败，请检查输入参数';
+        suc.style.color = '#dc2626';
+        resBox.style.display = 'block';
+        return;
+    }
+
+    suc.style.color = freq < 0 || freq > 50 ? '#d97706' : '#059669';
+    suc.textContent = freq < 0 || freq > 50
+        ? '⚠️ 频率 ' + freq.toFixed(2) + ' Hz 超出常规'
+        : '✅ 建议频率 ' + freq.toFixed(2) + ' Hz';
+
+    var wet = WIDTH * h * (0.002 * freq - CONST_TERM) * b * 3600;
+    document.getElementById('invFreq').textContent = freq.toFixed(2) + ' Hz';
+    document.getElementById('invHours').textContent = hours.toFixed(2) + ' h';
+    document.getElementById('invDryRate').textContent = fmt(wet * (1 - w.water), 2) + ' t/h';
+    document.getElementById('invWetRate').textContent = fmt(wet, 2) + ' t/h';
+    resBox.style.display = 'block';
+}
         function screenshotResult() {
             var data = calcSegments();
             if (!data || !data.valid || !data.items.length) { alert('请先完成时段填写并确保数据有效'); return; }
