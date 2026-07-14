@@ -10,6 +10,7 @@ const CORS_HEADERS = {
   'Access-Control-Max-Age': '86400'
 };
 
+// 生成 HMAC-SHA256 签名
 async function generateSignature(message, secret) {
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey(
@@ -23,14 +24,15 @@ async function generateSignature(message, secret) {
   return btoa(String.fromCharCode(...new Uint8Array(sigBuffer)));
 }
 
+// 验证请求，返回 { valid: boolean, reason?: string }
 async function verifyRequest(request, secret, contentType) {
   const ts = request.headers.get('X-Timestamp');
   const signature = request.headers.get('X-Signature');
-  if (!ts || !signature) return { valid: false, reason: 'Missing X-Timestamp or X-Signature' };
+  if (!ts || !signature) return { valid: false, reason: '缺少 X-Timestamp 或 X-Signature 头' };
 
   const now = Math.floor(Date.now() / 1000);
   if (Math.abs(now - parseInt(ts)) > MAX_TIME_DIFF) {
-    return { valid: false, reason: `Timestamp too old. Server time: ${now}, client: ${ts}` };
+    return { valid: false, reason: `时间戳无效（服务器时间 ${now}，客户端时间 ${ts}）` };
   }
 
   let message = ts + ':';
@@ -45,7 +47,7 @@ async function verifyRequest(request, secret, contentType) {
 
   const expectedSig = await generateSignature(message, secret);
   if (signature !== expectedSig) {
-    return { valid: false, reason: 'Signature mismatch' };
+    return { valid: false, reason: '签名不匹配' };
   }
 
   return { valid: true };
@@ -56,25 +58,24 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
+    // 处理预检请求
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: CORS_HEADERS });
     }
 
-    const contentType = request.headers.get('Content-Type') || '';
-    // 从环境变量读取密钥，如果没有则使用硬编码的 fallback（方便调试）
-    const secret = (env && env.SHARED_SECRET) || 'My$ecr3tK3y!2024';
+    // 从环境变量读取密钥（若未设置环境变量则使用硬编码作为 fallback，方便调试）
+    const secret = env.SHARED_SECRET || 'My$ecr3tK3y!2024';
 
+    const contentType = request.headers.get('Content-Type') || '';
     const verification = await verifyRequest(request, secret, contentType);
     if (!verification.valid) {
-      // 返回 401 并附带调试信息，同时加上 CORS 头
-      const responseHeaders = { ...CORS_HEADERS, 'Content-Type': 'text/plain' };
       return new Response(`401 Unauthorized: ${verification.reason}`, {
         status: 401,
-        headers: responseHeaders
+        headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' }
       });
     }
 
-    // ---- 以下为原有转发逻辑，保持不变 ----
+    // 转发到企业微信 Webhook
     if (path === '/send') {
       const resp = await fetch(SEND_URL, {
         method: 'POST',
@@ -88,6 +89,7 @@ export default {
       });
     }
 
+    // 上传文件到企业微信
     if (path === '/upload') {
       const type = url.searchParams.get('type') || 'file';
       const uploadUrl = UPLOAD_BASE + '&type=' + encodeURIComponent(type);
