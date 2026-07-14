@@ -2027,64 +2027,50 @@ function shareCurrentScreenshot() {
                 previewHtml,
                 function(onSuccess, onError) {
                     showProgress('正在处理图片...', 10);
-                    // 1. 使用 FileReader 读取 Blob 的二进制数据
                     var reader = new FileReader();
                     reader.onload = function(e) {
-    try {
-        var arrayBuffer = e.target.result;
-        var bytes = new Uint8Array(arrayBuffer);
-        var spark = new SparkMD5.ArrayBuffer();
-        spark.append(arrayBuffer);
-        var md5 = spark.end();
-        var base64 = btoa(String.fromCharCode.apply(null, bytes));
+                        try {
+                            var arrayBuffer = e.target.result;
+                            var bytes = new Uint8Array(arrayBuffer);
+                            var spark = new SparkMD5.ArrayBuffer();
+                            spark.append(arrayBuffer);
+                            var md5 = spark.end();
+                            var base64 = btoa(String.fromCharCode.apply(null, bytes));
 
-        var payload = {
-            msgtype: 'image',
-            image: {
-                base64: base64,
-                md5: md5
-            }
-        };
-
-        updateProgress('正在发送图片...', 50);
-
-        fetch(WEBHOOK_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        })
-        .then(function(response) { return response.json(); })
-        .then(function(json) {
-            if (json.errcode === 0) {
-                updateProgress('发送成功！', 100);
-                setTimeout(function() {
-                    hideProgress();
-                    onSuccess();
-                }, 800);
-            } else {
-                throw new Error(json.errmsg || '发送失败');
-            }
-        })
-        .catch(function(err) {
-            hideProgress();
-            onError(err);
-        });
-    } catch (err) {
-        hideProgress();
-        onError(err);
-    }
-};
+                            var payload = {
+                                msgtype: 'image',
+                                image: {
+                                    base64: base64,
+                                    md5: md5
+                                }
+                            };
 
                             updateProgress('正在发送图片...', 50);
-                            return fetch(WEBHOOK_URL, {
+
+                            fetch(WEBHOOK_URL, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify(payload)
+                            })
+                            .then(function(response) { return response.json(); })
+                            .then(function(json) {
+                                if (json.errcode === 0) {
+                                    updateProgress('发送成功！', 100);
+                                    setTimeout(function() {
+                                        hideProgress();
+                                        onSuccess();
+                                    }, 800);
+                                } else {
+                                    throw new Error(json.errmsg || '发送失败');
+                                }
+                            })
+                            .catch(function(err) {
+                                hideProgress();
+                                onError(err);
                             });
                         } catch (err) {
                             hideProgress();
                             onError(err);
-                            alert('处理图片数据失败：' + err.message);
                         }
                     };
                     reader.onerror = function() {
