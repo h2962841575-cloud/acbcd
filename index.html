@@ -1943,7 +1943,7 @@ function showConfirmWithPreview(title, sub, previewHtml, onConfirm, onCancel) {
         }
 
         // 分享截图（带进度条）
-       function generateScreenshotData() {
+      function generateScreenshotData() {
     return new Promise(function(resolve, reject) {
         var dataStr = document.getElementById('segmentResult').dataset.data;
         if (!dataStr) { reject(new Error('无数据，请先计算累计')); return; }
@@ -1982,9 +1982,7 @@ function showConfirmWithPreview(title, sub, previewHtml, onConfirm, onCancel) {
             width: 440,
         }).then(function(canvas) {
             document.body.removeChild(container);
-            // 改用 toDataURL 获取 base64，避免 toBlob 可能的数据损坏
             var dataUrl = canvas.toDataURL('image/png');
-            // 通过 fetch 将 dataUrl 转为 Blob，确保数据完整性
             fetch(dataUrl)
                 .then(function(res) { return res.blob(); })
                 .then(function(blob) {
